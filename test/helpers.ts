@@ -43,6 +43,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     host: '127.0.0.1',
     port: 0,
     maxConcurrentJobs: 2,
+    maxConcurrentDownloads: 2,
     jobTimeoutMs: 10000,
     maxImageDim: 2048,
     logLevel: 'fatal',

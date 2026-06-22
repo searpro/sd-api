@@ -77,6 +77,17 @@ export interface ComponentFile {
   role?: ClipRole; // only for clip components
 }
 
+/** An in-progress / interrupted download left on disk as a .part file. */
+export interface PartialFile {
+  type: ComponentType;
+  /** Final filename (without the .part suffix). */
+  name: string;
+  /** Bytes already on disk. */
+  received: number;
+  /** Total expected bytes, from the sidecar metadata if available. */
+  total: number | null;
+}
+
 export interface BundleInfo {
   id: string;
   name: string;
@@ -88,6 +99,8 @@ export interface BundleInfo {
   modified: string;
   /** Whether the bundle has at least a checkpoint and can be generated with. */
   ready: boolean;
+  /** Interrupted/partial downloads present on disk (resumable). */
+  partials: PartialFile[];
 }
 
 async function readManifest(dir: string): Promise<ModelManifest | null> {
@@ -110,9 +123,40 @@ async function listFiles(dir: string): Promise<{ name: string; size: number }[]>
   const out: { name: string; size: number }[] = [];
   for (const name of entries) {
     if (name.startsWith('.') || name === 'model.json') continue;
+    // In-progress downloads (and their sidecars) are not finished components.
+    if (name.endsWith('.part') || name.endsWith('.part.json')) continue;
     try {
       const s = await stat(join(dir, name));
       if (s.isFile()) out.push({ name, size: s.size });
+    } catch {
+      // skip
+    }
+  }
+  return out;
+}
+
+/** List interrupted .part downloads in a component directory. */
+async function listPartials(dir: string, type: ComponentType): Promise<PartialFile[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: PartialFile[] = [];
+  for (const name of entries) {
+    if (!name.endsWith('.part')) continue;
+    try {
+      const s = await stat(join(dir, name));
+      if (!s.isFile()) continue;
+      let total: number | null = null;
+      try {
+        const meta = JSON.parse(await readFile(join(dir, `${name}.json`), 'utf8'));
+        total = typeof meta.total === 'number' ? meta.total : null;
+      } catch {
+        // no sidecar
+      }
+      out.push({ type, name: name.slice(0, -'.part'.length), received: s.size, total });
     } catch {
       // skip
     }
@@ -150,6 +194,12 @@ export async function inspectBundle(modelsDir: string, id: string): Promise<Bund
   const vaeFiles = await listFiles(join(dir, SUBDIRS.vae));
   const clipFiles = await listFiles(join(dir, SUBDIRS.clip));
 
+  const partials = [
+    ...(await listPartials(join(dir, SUBDIRS.checkpoint), 'checkpoint')),
+    ...(await listPartials(join(dir, SUBDIRS.vae), 'vae')),
+    ...(await listPartials(join(dir, SUBDIRS.clip), 'clip')),
+  ];
+
   const checkpoint = pickFile(ckptFiles, manifest?.components?.checkpoint);
   const vae = pickFile(vaeFiles, manifest?.components?.vae);
   const clip: ComponentFile[] = clipFiles.map((f) => ({
@@ -176,6 +226,7 @@ export async function inspectBundle(modelsDir: string, id: string): Promise<Bund
     size,
     modified,
     ready: checkpoint !== null,
+    partials,
   };
 }
 

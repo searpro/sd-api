@@ -539,14 +539,84 @@
         return row;
       }
 
+      function progressBarHtml(received, total) {
+        const pct = total ? Math.min(100, Math.round((received / total) * 100)) : null;
+        const label = pct != null ? pct + '%' : fmtSize(received);
+        const sub = total ? fmtSize(received) + ' / ' + fmtSize(total) : fmtSize(received) + ' (size unknown)';
+        return '<div class="bar" style="margin-top:4px;"><span style="width:' + (pct ?? 30) + '%"></span></div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:3px;display:flex;justify-content:space-between;"><span>' + sub + '</span><span>' + label + '</span></div>';
+      }
+
+      function downloadRow(model, task) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);';
+        const statusColor = task.status === 'failed' ? 'var(--danger)' : task.status === 'completed' ? 'var(--accent-2)' : 'var(--muted)';
+        const top = document.createElement('div');
+        top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        top.innerHTML = '<span><span class="pill">' + task.type + '</span> ' + task.name +
+          ' <span style="color:' + statusColor + ';font-size:11px">· ' + task.status + (task.resumed ? ' (resumed)' : '') + '</span></span>';
+        const actions = document.createElement('span');
+        if (task.status === 'downloading' || task.status === 'queued') {
+          const c = document.createElement('button'); c.className = 'ghost'; c.textContent = 'Cancel';
+          c.onclick = async () => { try { await api('/v1/downloads/' + task.id + '/cancel', { method: 'POST' }); refreshModelsSoon(); } catch (e) { toast(e.message, true); } };
+          actions.appendChild(c);
+        } else if (task.status === 'failed' || task.status === 'cancelled') {
+          const r = document.createElement('button'); r.className = 'ghost'; r.textContent = 'Resume';
+          r.onclick = async () => { try { await api('/v1/downloads/' + task.id + '/retry', { method: 'POST' }); ensureDownloadPolling(); refreshModelsSoon(); } catch (e) { toast(e.message, true); } };
+          const x = document.createElement('button'); x.className = 'danger'; x.textContent = 'Discard';
+          x.onclick = async () => { try { await api('/v1/downloads/' + task.id + '?discard=true', { method: 'DELETE' }); refreshModelsSoon(); } catch (e) { toast(e.message, true); } };
+          actions.append(r, x);
+        }
+        top.appendChild(actions);
+        row.appendChild(top);
+        if (task.status === 'downloading' || task.status === 'queued') {
+          const bar = document.createElement('div');
+          bar.innerHTML = progressBarHtml(task.received, task.total);
+          row.appendChild(bar);
+        } else if (task.error) {
+          const e = document.createElement('div'); e.style.cssText = 'font-size:11px;color:var(--danger);margin-top:2px;'; e.textContent = task.error;
+          row.appendChild(e);
+        }
+        return row;
+      }
+
+      function partialRow(model, p) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        const pct = p.total ? Math.round((p.received / p.total) * 100) + '%' : fmtSize(p.received);
+        const left = document.createElement('div');
+        left.innerHTML = '<span class="pill">' + p.type + '</span> ' + p.name +
+          ' <span style="color:var(--muted);font-size:11px">· partial ' + pct + '</span>';
+        const acts = document.createElement('span');
+        const r = document.createElement('button'); r.className = 'ghost'; r.textContent = 'Resume';
+        r.onclick = async () => {
+          try { await api('/v1/downloads/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, type: p.type, name: p.name }) }); ensureDownloadPolling(); refreshModelsSoon(); }
+          catch (e) { toast(e.message, true); }
+        };
+        acts.appendChild(r);
+        row.append(left, acts);
+        return row;
+      }
+
+      let modelsRefreshTimer = null;
+      function refreshModelsSoon() { clearTimeout(modelsRefreshTimer); modelsRefreshTimer = setTimeout(loadModels, 300); }
+
       async function loadModels() {
         try {
-          const { models } = await api('/v1/models');
-          // populate datalist of model names
+          const [{ models }, dl] = await Promise.all([api('/v1/models'), api('/v1/downloads')]);
+          const downloads = dl.downloads || [];
+          const byModel = {};
+          downloads.forEach((t) => { (byModel[t.model] = byModel[t.model] || []).push(t); });
+
           $('modelList').innerHTML = models.map((m) => '<option value="' + m.id + '">').join('');
           const wrap = $('modelCards');
           wrap.innerHTML = '';
-          $('modelsEmpty').classList.toggle('hidden', models.length > 0);
+          $('modelsEmpty').classList.toggle('hidden', models.length > 0 || downloads.length > 0);
+
+          // Models that only exist as in-flight downloads (bundle dir not yet created).
+          const known = new Set(models.map((m) => m.id));
+          Object.keys(byModel).forEach((id) => { if (!known.has(id)) models.push({ id, name: id, ready: false, loadMode: 'model', checkpoint: null, vae: null, clip: [], partials: [], _pending: true }); });
+
           models.forEach((m) => {
             const card = document.createElement('div');
             card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--panel-2);';
@@ -562,19 +632,38 @@
             head.appendChild(delAll);
             card.appendChild(head);
 
-            const comps = [];
-            if (m.checkpoint) comps.push(compRow(m.id, 'checkpoint', m.checkpoint));
-            if (m.vae) comps.push(compRow(m.id, 'vae', m.vae));
-            (m.clip || []).forEach((c) => comps.push(compRow(m.id, 'clip', c)));
-            if (comps.length === 0) {
-              const e = document.createElement('div');
-              e.style.cssText = 'color:var(--muted);font-size:12px;';
-              e.textContent = 'Empty bundle — add a checkpoint.';
+            if (m.checkpoint) card.appendChild(compRow(m.id, 'checkpoint', m.checkpoint));
+            if (m.vae) card.appendChild(compRow(m.id, 'vae', m.vae));
+            (m.clip || []).forEach((c) => card.appendChild(compRow(m.id, 'clip', c)));
+
+            // Active / failed downloads for this model.
+            const active = (byModel[m.id] || []).filter((t) => t.status !== 'completed');
+            active.forEach((t) => card.appendChild(downloadRow(m.id, t)));
+
+            // Partial files on disk without an active task (resumable).
+            const activeNames = new Set(active.map((t) => t.type + '/' + t.name));
+            (m.partials || []).forEach((p) => { if (!activeNames.has(p.type + '/' + p.name)) card.appendChild(partialRow(m.id, p)); });
+
+            if (!m.checkpoint && !m.vae && (!m.clip || !m.clip.length) && !active.length && (!m.partials || !m.partials.length)) {
+              const e = document.createElement('div'); e.style.cssText = 'color:var(--muted);font-size:12px;'; e.textContent = 'Empty bundle — add a checkpoint.';
               card.appendChild(e);
-            } else comps.forEach((c) => card.appendChild(c));
+            }
             wrap.appendChild(card);
           });
         } catch (e) { toast(e.message, true); }
+      }
+
+      let downloadPoller = null;
+      function ensureDownloadPolling() {
+        if (downloadPoller) return;
+        downloadPoller = setInterval(async () => {
+          try {
+            const { downloads } = await api('/v1/downloads');
+            const anyActive = downloads.some((t) => t.status === 'downloading' || t.status === 'queued');
+            if ($('tab-models') && !$('tab-models').classList.contains('hidden')) loadModels();
+            if (!anyActive) { clearInterval(downloadPoller); downloadPoller = null; }
+          } catch { /* keep polling */ }
+        }, 1200);
       }
 
       async function deleteModel(id) {
@@ -604,15 +693,16 @@
         };
         const name = $('dlName').value.trim();
         if (name) payload.name = name;
-        $('dlBtn').disabled = true; $('dlBtn').textContent = 'Downloading…';
+        $('dlBtn').disabled = true; $('dlBtn').textContent = 'Queuing…';
         try {
-          const info = await api('/v1/models/download', {
+          const task = await api('/v1/models/download', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
           });
-          toast('Added to ' + info.id);
+          toast('Download queued: ' + task.name);
           $('dlUrl').value = ''; $('dlName').value = '';
+          ensureDownloadPolling();
           loadModels(); loadCheckpoints();
         } catch (err) {
           toast(err.message, true);
@@ -745,24 +835,51 @@
             body: JSON.stringify({ name: model.name, load: model.loadMode, components, defaults: model.defaults || {}, extra_args: model.extraArgs || [] }),
           });
 
-          // 2. Download each component sequentially.
-          for (let i = 0; i < chosen.length; i++) {
-            const s = chosen[i];
-            status.textContent = 'Downloading ' + s.role + ' (' + (i + 1) + '/' + chosen.length + '): ' + s.file.filename + ' …';
-            await api('/v1/models/download', {
+          // 2. Enqueue all component downloads (run in background, concurrency-limited).
+          const ids = [];
+          for (const s of chosen) {
+            const task = await api('/v1/models/download', {
               method: 'POST', headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ model: name, type: s.bundleType, url: s.file.url, name: s.file.filename }),
             });
+            ids.push(task.id);
           }
-          status.textContent = '';
-          toast('Installed ' + name);
+          toast('Queued ' + ids.length + ' downloads for ' + name);
+          ensureDownloadPolling();
           loadCheckpoints();
+          // 3. Show live progress here until all finish.
+          pollCatalogInstall(name, ids, status, btn);
         } catch (e) {
           status.textContent = '';
           toast('Install failed: ' + e.message, true);
-        } finally {
           btn.disabled = false;
         }
+      }
+
+      async function pollCatalogInstall(model, ids, status, btn) {
+        const tick = async () => {
+          let tasks;
+          try { tasks = (await api('/v1/downloads?model=' + encodeURIComponent(model))).downloads.filter((t) => ids.includes(t.id)); }
+          catch { return setTimeout(tick, 1500); }
+          status.innerHTML = '';
+          tasks.forEach((t) => {
+            const d = document.createElement('div');
+            d.style.cssText = 'margin-bottom:6px;';
+            const pct = t.total ? Math.round((t.received / t.total) * 100) + '%' : fmtSize(t.received);
+            d.innerHTML = '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>' + t.name + '</span><span>' + t.status + ' · ' + pct + '</span></div>' +
+              ((t.status === 'downloading' || t.status === 'queued') ? progressBarHtml(t.received, t.total) : '') +
+              (t.error ? '<div style="color:var(--danger);font-size:11px;">' + t.error + '</div>' : '');
+            status.appendChild(d);
+          });
+          const done = tasks.length > 0 && tasks.every((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
+          if (!done) { setTimeout(tick, 1200); return; }
+          btn.disabled = false;
+          const failed = tasks.filter((t) => t.status !== 'completed');
+          if (failed.length === 0) toast('Installed ' + model);
+          else toast(failed.length + ' download(s) failed — resume from the Models tab', true);
+          loadCheckpoints();
+        };
+        tick();
       }
 
       $('refreshCatalog').addEventListener('click', loadCatalog);

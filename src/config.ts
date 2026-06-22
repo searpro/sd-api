@@ -20,6 +20,7 @@ const configFileSchema = z
     host: z.string(),
     port: z.number().int().positive(),
     max_concurrent_jobs: z.number().int().positive(),
+    max_concurrent_downloads: z.number().int().positive(),
     job_timeout_ms: z.number().int().positive(),
     max_image_dim: z.number().int().positive(),
     log_level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
@@ -38,6 +39,7 @@ export interface Config {
   host: string;
   port: number;
   maxConcurrentJobs: number;
+  maxConcurrentDownloads: number;
   jobTimeoutMs: number;
   maxImageDim: number;
   logLevel: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
@@ -89,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.SD_HOST,
     port: num(env.SD_PORT),
     max_concurrent_jobs: num(env.SD_MAX_CONCURRENT_JOBS),
+    max_concurrent_downloads: num(env.SD_MAX_CONCURRENT_DOWNLOADS),
     job_timeout_ms: num(env.SD_JOB_TIMEOUT_MS),
     max_image_dim: num(env.SD_MAX_IMAGE_DIM),
     log_level: env.SD_LOG_LEVEL,
@@ -111,6 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: parsed.host,
     port: parsed.port,
     maxConcurrentJobs: parsed.max_concurrent_jobs,
+    maxConcurrentDownloads: parsed.max_concurrent_downloads,
     jobTimeoutMs: parsed.job_timeout_ms,
     maxImageDim: parsed.max_image_dim,
     logLevel: parsed.log_level,

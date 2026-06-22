@@ -95,6 +95,22 @@ describe('models (bundles)', () => {
     expect(create.json().ready).toBe(false);
   });
 
+  it('enqueues a background download and lists it', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/models/download',
+      payload: { model: 'dlmodel', type: 'checkpoint', url: 'http://127.0.0.1:1/model.gguf' },
+    });
+    expect(res.statusCode).toBe(202);
+    const task = res.json();
+    expect(task.id).toBeTruthy();
+    expect(task.status).toMatch(/queued|downloading|failed/);
+
+    const list = await app.inject({ method: 'GET', url: '/v1/downloads?model=dlmodel' });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().downloads.some((d: { id: string }) => d.id === task.id)).toBe(true);
+  });
+
   it('blocks traversal on delete', async () => {
     const res = await app.inject({ method: 'DELETE', url: '/v1/models/..%2F..%2Fetc' });
     expect([400, 404]).toContain(res.statusCode);

@@ -6,6 +6,7 @@
   "host": "0.0.0.0",
   "port": 3000,
   "max_concurrent_jobs": 2,
+  "max_concurrent_downloads": 2,
   "job_timeout_ms": 600000,
   "max_image_dim": 2048,
   "log_level": "info",

@@ -1,8 +1,5 @@
-import { mkdir, readdir, stat, unlink, rename, rm, writeFile } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
+import { mkdir, readdir, stat, unlink, rm, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import { safeResolve, assertSafeName } from '../util/paths.js';
@@ -15,9 +12,19 @@ import {
   inspectBundle,
 } from './bundle.js';
 
-const ALLOWED_EXT = new Set(['.gguf', '.safetensors', '.ckpt', '.pt', '.bin']);
+export const ALLOWED_EXT = new Set(['.gguf', '.safetensors', '.ckpt', '.pt', '.bin']);
 
 export type { ComponentType, BundleInfo } from './bundle.js';
+
+/** Resolved on-disk paths for a model component download. */
+export interface ComponentPaths {
+  dir: string;
+  finalPath: string;
+  /** Partial-download file (resume target). */
+  tmpPath: string;
+  /** Sidecar JSON holding resume metadata (url, total). */
+  metaPath: string;
+}
 
 export class ModelManager {
   constructor(
@@ -74,6 +81,7 @@ export class ModelManager {
           size: e.size,
           modified: e.mtime,
           ready: true,
+          partials: [],
         });
       }
     }
@@ -97,6 +105,7 @@ export class ModelManager {
         size: s.size,
         modified: s.mtime.toISOString(),
         ready: true,
+        partials: [],
       };
     } catch {
       return null;
@@ -128,21 +137,8 @@ export class ModelManager {
     return join(dir, SUBDIRS[type]);
   }
 
-  /**
-   * Stream a component download into models/<model>/<type>/ (Phase 3).
-   * Downloads to a temp file and renames on success so partial downloads never
-   * look like valid components.
-   */
-  async download(input: {
-    model: string;
-    type: ComponentType;
-    url: string;
-    name?: string;
-    signal?: AbortSignal;
-  }): Promise<BundleInfo> {
-    const { model, type, url, signal } = input;
-    assertSafeName(model);
-
+  /** Derive a download filename from an explicit name or the URL's last segment. */
+  static fileNameFor(url: string, explicit?: string): string {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -152,8 +148,7 @@ export class ModelManager {
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
       throw errors.downloadFailed(`Unsupported URL protocol: ${parsed.protocol}`);
     }
-
-    const name = input.name ?? decodeURIComponent(parsed.pathname.split('/').pop() ?? '');
+    const name = explicit ?? decodeURIComponent(parsed.pathname.split('/').pop() ?? '');
     assertSafeName(name);
     const ext = extname(name).toLowerCase();
     if (!ALLOWED_EXT.has(ext)) {
@@ -161,32 +156,26 @@ export class ModelManager {
         `Refusing to download file with unsupported extension "${ext}". Allowed: ${[...ALLOWED_EXT].join(', ')}`,
       );
     }
+    return name;
+  }
 
+  /** Resolve (and create) the on-disk paths for a component download. */
+  async resolveComponentPaths(
+    model: string,
+    type: ComponentType,
+    name: string,
+  ): Promise<ComponentPaths> {
+    assertSafeName(model);
+    assertSafeName(name);
     const dir = this.componentDir(model, type);
     await mkdir(dir, { recursive: true });
     const finalPath = safeResolve(dir, name);
-    const tmpPath = `${finalPath}.part`;
-
-    this.log.info({ url, model, type, name }, 'starting model download');
-    const res = await fetch(url, { signal });
-    if (!res.ok || !res.body) {
-      throw errors.downloadFailed(`Download failed: HTTP ${res.status} ${res.statusText}`);
-    }
-
-    try {
-      await pipeline(
-        Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
-        createWriteStream(tmpPath),
-      );
-      await rename(tmpPath, finalPath);
-    } catch (err) {
-      await unlink(tmpPath).catch(() => {});
-      throw errors.downloadFailed(`Download interrupted: ${(err as Error).message}`);
-    }
-
-    const s = await stat(finalPath);
-    this.log.info({ model, type, name, size: s.size }, 'model download complete');
-    return (await this.get(model))!;
+    return {
+      dir,
+      finalPath,
+      tmpPath: `${finalPath}.part`,
+      metaPath: `${finalPath}.part.json`,
+    };
   }
 
   /** Delete an entire model bundle (or a single-file model). */

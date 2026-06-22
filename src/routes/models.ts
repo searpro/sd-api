@@ -2,12 +2,20 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { errorResponseSchema } from '../schemas/generate.js';
+import { downloadTaskSchema } from './downloads.js';
 import type { ModelManifest } from '../models/bundle.js';
 
 const componentFileSchema = z.object({
   name: z.string(),
   size: z.number(),
   role: z.string().optional(),
+});
+
+const partialSchema = z.object({
+  type: z.enum(['checkpoint', 'vae', 'clip']),
+  name: z.string(),
+  received: z.number(),
+  total: z.number().nullable(),
 });
 
 const bundleSchema = z.object({
@@ -20,6 +28,7 @@ const bundleSchema = z.object({
   size: z.number(),
   modified: z.string(),
   ready: z.boolean(),
+  partials: z.array(partialSchema),
 });
 
 const componentType = z.enum(['checkpoint', 'vae', 'clip']);
@@ -124,20 +133,22 @@ export async function modelRoutes(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // Download a component into a bundle.
+  // Enqueue a background download of a component into a bundle.
   app.post(
     '/v1/models/download',
     {
       schema: {
-        tags: ['models'],
-        summary: 'Download a model component (checkpoint/vae/clip) into a bundle',
+        tags: ['models', 'downloads'],
+        summary: 'Enqueue a background download of a model component',
+        description:
+          'Returns a download task immediately. Track progress via GET /v1/downloads/:id.',
         body: downloadSchema,
-        response: { 201: bundleSchema, 400: errorResponseSchema, 502: errorResponseSchema },
+        response: { 202: downloadTaskSchema, 400: errorResponseSchema },
       },
     },
     async (req, reply) => {
-      const bundle = await app.models.download(req.body);
-      return reply.code(201).send(bundle);
+      const task = app.downloads.enqueue(req.body);
+      return reply.code(202).send(task);
     },
   );
 

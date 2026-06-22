@@ -20,6 +20,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | UI | Thin web console (generation + model management) | `GET /` |
 | Catalog | Guided model downloads (format + quantization) | `GET /v1/catalog` |
 | Editing | img2img + reference-image editing (single/multi) | `POST /v1/inputs` |
+| Downloads | Background downloads w/ progress + resume | `GET /v1/downloads` |
 
 ## Prerequisites
 
@@ -109,7 +110,8 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root holding per-model bundle directories |
 | `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images |
 | `SD_HOST` / `SD_PORT` | `host` / `port` | `0.0.0.0` / `3000` | Listen address |
-| `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `2` | Queue concurrency |
+| `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `2` | Generation queue concurrency |
+| `SD_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `2` | Download queue concurrency |
 | `SD_JOB_TIMEOUT_MS` | `job_timeout_ms` | `600000` | Per-process hard timeout |
 | `SD_MAX_IMAGE_DIM` | `max_image_dim` | `2048` | Max width/height accepted |
 | `SD_LOG_LEVEL` | `log_level` | `info` | pino level |
@@ -193,8 +195,8 @@ Install flow (what the UI does, and you can script):
 
 1. `PUT /v1/models/<name>/manifest` — write `model.json` with the load mode,
    role→filename mapping and default params.
-2. `POST /v1/models/download` once per chosen component (checkpoint/vae/clip),
-   streaming each weight into the bundle.
+2. `POST /v1/models/download` once per chosen component (checkpoint/vae/clip).
+   This enqueues a **background download** (see below) and returns immediately.
 
 Included models (txt2img): SD 1.5 / 2.1, SDXL base / Turbo, SSD-1B, Segmind
 Vega, SD3 Medium, SD 3.5 Large, HiDream-O1-Image, FLUX.1 dev/schnell, FLUX.2
@@ -205,8 +207,34 @@ PiD and Ideogram4 are omitted because the generation pipeline here is txt2img.
 Extend by adding entries to `src/catalog/data.ts`. Set `HF_TOKEN` to raise the
 HuggingFace API rate limit used for the file listings.
 
-> Note: large weights (multi-GB) download synchronously per component; the UI
-> shows per-component progress while each completes.
+## Background downloads (progress + resume)
+
+Model-component downloads run as background tasks with byte-level progress and
+**resume** support, so multi-GB weights survive interruptions.
+
+- `POST /v1/models/download` enqueues a task and returns it immediately (202).
+  Concurrency is capped by `SD_MAX_CONCURRENT_DOWNLOADS`.
+- `GET /v1/downloads` (optionally `?model=<id>`) / `GET /v1/downloads/:id` —
+  status: `queued | downloading | completed | failed | cancelled`, plus
+  `received` / `total` bytes.
+- `GET /v1/downloads/:id/stream` — SSE progress.
+- `POST /v1/downloads/:id/cancel` — stop a running download, keeping its
+  `.part` file for later resuming.
+- `POST /v1/downloads/:id/retry` — resume a failed/cancelled download.
+- `POST /v1/downloads/resume` `{model,type,name}` — resume an on-disk partial
+  (e.g. after a server restart).
+- `DELETE /v1/downloads/:id?discard=true` — drop the task (and the partial).
+
+How resume works: each download streams to `<file>.part` with a `<file>.part.json`
+sidecar recording the source URL + total size. On resume the manager sends an
+HTTP `Range` request from the current `.part` size and appends; if the server
+ignores the range it restarts cleanly. The `.part` is promoted to the final
+filename only on success, so interrupted downloads never look like valid
+components. `GET /v1/models` reports leftover partials per bundle (`partials[]`),
+and the web UI shows per-file status with cancel / resume / discard controls.
+
+> The model catalog's "Install" enqueues all components at once and shows live
+> per-file progress; a failed file can be resumed from the Models tab.
 
 ## Image editing / img2img
 
@@ -342,7 +370,9 @@ src/
   schemas/          # zod request/response schemas
   sd/               # CLI wrapper, arg mapping, progress parsing,
                     #   release selection + auto-installer
-  models/           # bundle resolver + model manager (list/download/delete)
+  models/           # bundle resolver + model manager (list/delete/paths)
+  downloads/        # background download manager (progress + resume)
+  catalog/          # curated model catalog + HuggingFace file listing
   jobs/             # in-memory job queue + manager
   routes/           # generate, jobs, models, outputs, health
   util/             # path safety, filename, validation
