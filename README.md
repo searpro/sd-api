@@ -18,6 +18,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | 7 | Config (file + env) | — |
 | 8 | OpenAPI 3.1 docs + Swagger UI | `GET /docs` |
 | UI | Thin web console (generation + model management) | `GET /` |
+| Catalog | Guided model downloads (format + quantization) | `GET /v1/catalog` |
 
 ## Prerequisites
 
@@ -85,6 +86,8 @@ A dependency-free, single-file frontend is served at `/` (no build step —
   CFG / width / height / seed / sampler, submit as an async job, and watch
   live SSE progress (bar + step count + log tail) until the image renders.
   Includes cancel.
+- **Catalog** — browse supported models and choose format + quantization per
+  component, then download + install as a bundle in one click.
 - **Models** — list installed models with size/type, delete them, and
   download new components (checkpoint/vae/clip) by URL into a model bundle.
 
@@ -165,6 +168,39 @@ Drop a manifest in the bundle to override auto-detection:
 ```
 
 `defaults` are applied to any generation request that omits those fields.
+
+## Model catalog (guided downloads)
+
+Rather than hunting for URLs, the **Catalog** tab lets users pick a supported
+model and choose the **format** (`safetensors` / `gguf`) and **quantization**
+for each component, then installs it as a ready-to-use bundle.
+
+The catalog itself is a small curated dataset
+([`src/catalog/data.ts`](src/catalog/data.ts)) built from the upstream
+[docs](https://github.com/leejet/stable-diffusion.cpp/tree/master/docs): each
+model maps its components (checkpoint / vae / clip / llm …) to HuggingFace
+repos. The actual files and their quantizations are listed **live** via the HF
+Hub API, so the options stay current as new quants are published (no giant
+hardcoded URL list to maintain).
+
+```bash
+curl localhost:3000/v1/catalog                      # curated models + components
+curl localhost:3000/v1/catalog/z-image-turbo/files  # live file/quant options per component (HF)
+```
+
+Install flow (what the UI does, and you can script):
+
+1. `PUT /v1/models/<name>/manifest` — write `model.json` with the load mode,
+   role→filename mapping and default params.
+2. `POST /v1/models/download` once per chosen component (checkpoint/vae/clip),
+   streaming each weight into the bundle.
+
+Included models: Z-Image Turbo, Z-Image, FLUX.1 dev/schnell, Qwen-Image,
+Chroma, SD 3.5 Large. Extend by adding entries to `src/catalog/data.ts`. Set
+`HF_TOKEN` to raise the HuggingFace API rate limit used for the file listings.
+
+> Note: large weights (multi-GB) download synchronously per component; the UI
+> shows per-component progress while each completes.
 
 ## API overview
 

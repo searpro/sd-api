@@ -14,10 +14,12 @@ import type { Config } from './config.js';
 import { SdWrapper } from './sd/wrapper.js';
 import { ModelManager } from './models/manager.js';
 import { JobManager } from './jobs/manager.js';
+import { CatalogManager } from './catalog/manager.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { generateRoutes } from './routes/generate.js';
 import { modelRoutes } from './routes/models.js';
+import { catalogRoutes } from './routes/catalog.js';
 import { jobRoutes } from './routes/jobs.js';
 import { outputRoutes } from './routes/outputs.js';
 import './types.js';
@@ -35,10 +37,12 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   const sd = new SdWrapper(config, app.log);
   const models = new ModelManager(config, app.log);
   const jobs = new JobManager(config, sd, app.log);
+  const catalog = new CatalogManager(app.log);
   app.decorate('config', config);
   app.decorate('sd', sd);
   app.decorate('models', models);
   app.decorate('jobs', jobs);
+  app.decorate('catalog', catalog);
 
   // OpenAPI 3.1 docs (Phase 8).
   await app.register(fastifySwagger, {
@@ -54,6 +58,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         { name: 'generate', description: 'Image generation' },
         { name: 'jobs', description: 'Async job system' },
         { name: 'models', description: 'Model management' },
+        { name: 'catalog', description: 'Downloadable model catalog' },
         { name: 'outputs', description: 'Generated images' },
         { name: 'system', description: 'Health & meta' },
       ],
@@ -92,6 +97,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(generateRoutes);
   await app.register(modelRoutes);
+  await app.register(catalogRoutes);
   await app.register(jobRoutes);
   await app.register(outputRoutes);
 

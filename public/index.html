@@ -133,6 +133,7 @@
 
     <div class="tabs">
       <button class="tab active" data-tab="generate">Generate</button>
+      <button class="tab" data-tab="catalog">Catalog</button>
       <button class="tab" data-tab="models">Models</button>
     </div>
 
@@ -178,6 +179,28 @@
             <div class="status-line"><span id="statusText">queued</span><span id="stepText"></span></div>
           </div>
           <pre class="log" id="log"></pre>
+        </div>
+      </section>
+
+      <!-- CATALOG -->
+      <section id="tab-catalog" class="grid hidden">
+        <div class="panel">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <h2 style="margin:0;">Model catalog</h2>
+            <button class="ghost" id="refreshCatalog" type="button">Refresh</button>
+          </div>
+          <p style="color:var(--muted);font-size:12px;margin:0 0 10px;">
+            Curated from the stable-diffusion.cpp docs. Pick a model, then choose format and
+            quantization for each component.
+          </p>
+          <div id="catalogList"></div>
+        </div>
+
+        <div class="panel">
+          <h2 id="catalogDetailTitle">Select a model</h2>
+          <div id="catalogDetail">
+            <span class="hint" style="color:var(--muted)">Choose a model from the list to configure its download.</span>
+          </div>
         </div>
       </section>
 
@@ -259,8 +282,10 @@
           btn.classList.add('active');
           const tab = btn.dataset.tab;
           $('tab-generate').classList.toggle('hidden', tab !== 'generate');
+          $('tab-catalog').classList.toggle('hidden', tab !== 'catalog');
           $('tab-models').classList.toggle('hidden', tab !== 'models');
           if (tab === 'models') loadModels();
+          if (tab === 'catalog') loadCatalog();
         });
       });
 
@@ -520,6 +545,149 @@
       });
 
       $('refreshModels').addEventListener('click', loadModels);
+
+      // ---- Catalog ----
+      let catalogModels = [];
+
+      async function loadCatalog() {
+        try {
+          const { models } = await api('/v1/catalog');
+          catalogModels = models;
+          const list = $('catalogList');
+          list.innerHTML = '';
+          models.forEach((m) => {
+            const card = document.createElement('div');
+            card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel-2);cursor:pointer;';
+            card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + m.loadMode + '</span>' +
+              '<div style="color:var(--muted);font-size:12px;margin-top:3px;">' + (m.description || '') + '</div>';
+            card.onclick = () => { document.querySelectorAll('#catalogList > div').forEach(d => d.style.borderColor = 'var(--border)'); card.style.borderColor = 'var(--accent)'; selectCatalogModel(m.id); };
+            list.appendChild(card);
+          });
+        } catch (e) { toast(e.message, true); }
+      }
+
+      async function selectCatalogModel(id) {
+        const model = catalogModels.find((m) => m.id === id);
+        $('catalogDetailTitle').textContent = model.name;
+        const detail = $('catalogDetail');
+        detail.innerHTML = '<span style="color:var(--muted)">Loading available files from HuggingFace…</span>';
+        let data;
+        try {
+          data = await api('/v1/catalog/' + encodeURIComponent(id) + '/files');
+        } catch (e) { detail.innerHTML = '<span style="color:var(--danger)">' + e.message + '</span>'; return; }
+
+        detail.innerHTML = '';
+        const nameWrap = document.createElement('div');
+        nameWrap.innerHTML = '<label>Install as (bundle name)</label>';
+        const nameInput = document.createElement('input');
+        nameInput.id = 'catName'; nameInput.value = id;
+        nameWrap.appendChild(nameInput);
+        detail.appendChild(nameWrap);
+
+        const selectors = []; // {role, bundleType, getChoice}
+        data.components.forEach((c) => {
+          const box = document.createElement('div');
+          box.style.cssText = 'border-top:1px solid var(--border);margin-top:12px;padding-top:10px;';
+          box.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:6px;">' + c.label +
+            ' <span class="pill">' + c.role + '</span>' + (c.required ? '' : ' <span style="color:var(--muted);font-size:11px">optional</span>') + '</div>';
+
+          const formats = Object.keys(c.files).filter((f) => (c.files[f] || []).length > 0);
+          if (formats.length === 0) {
+            const errs = c.errors ? Object.values(c.errors).join('; ') : 'no files found';
+            box.innerHTML += '<div style="color:var(--danger);font-size:12px;">Unavailable: ' + errs + '</div>';
+            detail.appendChild(box);
+            selectors.push({ role: c.role, bundleType: c.bundleType, required: c.required, getChoice: () => null });
+            return;
+          }
+
+          const row = document.createElement('div');
+          row.className = formats.length > 1 ? 'row' : '';
+          const fmtSel = document.createElement('select');
+          formats.forEach((f) => { const o = document.createElement('option'); o.value = f; o.textContent = f; fmtSel.appendChild(o); });
+          const fileSel = document.createElement('select');
+
+          const fillFiles = () => {
+            const fmt = fmtSel.value;
+            const files = c.files[fmt] || [];
+            fileSel.innerHTML = '';
+            files.forEach((file, i) => {
+              const o = document.createElement('option');
+              o.value = i;
+              o.textContent = (file.quant || file.filename) + ' · ' + fmtSize(file.size);
+              fileSel.appendChild(o);
+            });
+          };
+          fmtSel.onchange = fillFiles;
+          fillFiles();
+
+          if (formats.length > 1) {
+            const fc = document.createElement('div'); fc.innerHTML = '<label>Format</label>'; fc.appendChild(fmtSel);
+            const qc = document.createElement('div'); qc.innerHTML = '<label>' + (c.quantizable ? 'Quantization' : 'File') + '</label>'; qc.appendChild(fileSel);
+            row.append(fc, qc); box.appendChild(row);
+          } else {
+            const qc = document.createElement('div'); qc.innerHTML = '<label>' + (c.quantizable ? 'Quantization' : 'File') + '</label>'; qc.appendChild(fileSel);
+            box.appendChild(qc);
+          }
+          detail.appendChild(box);
+          selectors.push({
+            role: c.role, bundleType: c.bundleType, required: c.required,
+            getChoice: () => {
+              const fmt = fmtSel.value; const files = c.files[fmt] || [];
+              return files[Number(fileSel.value)] || null;
+            },
+          });
+        });
+
+        const installBtn = document.createElement('button');
+        installBtn.className = 'primary'; installBtn.textContent = 'Download & install';
+        installBtn.onclick = () => installCatalogModel(model, nameInput.value.trim(), selectors, installBtn);
+        detail.appendChild(installBtn);
+
+        const status = document.createElement('div');
+        status.id = 'catStatus'; status.style.cssText = 'margin-top:10px;font-size:12px;color:var(--muted);';
+        detail.appendChild(status);
+      }
+
+      async function installCatalogModel(model, name, selectors, btn) {
+        if (!name) { toast('Enter a bundle name', true); return; }
+        const chosen = selectors.map((s) => ({ ...s, file: s.getChoice() }))
+          .filter((s) => s.file);
+        const missingRequired = selectors.filter((s) => s.required && !s.getChoice());
+        if (missingRequired.length) { toast('Missing files for: ' + missingRequired.map((s) => s.role).join(', '), true); return; }
+
+        btn.disabled = true;
+        const status = $('catStatus');
+        try {
+          // 1. Write the manifest (load mode + role→filename + defaults) up front.
+          const components = {};
+          chosen.forEach((s) => { components[s.role] = s.file.filename; });
+          status.textContent = 'Writing manifest…';
+          await api('/v1/models/' + encodeURIComponent(name) + '/manifest', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: model.name, load: model.loadMode, components, defaults: model.defaults || {} }),
+          });
+
+          // 2. Download each component sequentially.
+          for (let i = 0; i < chosen.length; i++) {
+            const s = chosen[i];
+            status.textContent = 'Downloading ' + s.role + ' (' + (i + 1) + '/' + chosen.length + '): ' + s.file.filename + ' …';
+            await api('/v1/models/download', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ model: name, type: s.bundleType, url: s.file.url, name: s.file.filename }),
+            });
+          }
+          status.textContent = '';
+          toast('Installed ' + name);
+          loadCheckpoints();
+        } catch (e) {
+          status.textContent = '';
+          toast('Install failed: ' + e.message, true);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      $('refreshCatalog').addEventListener('click', loadCatalog);
 
       // ---- Init ----
       fillSamplers();

@@ -1,4 +1,4 @@
-import { mkdir, readdir, stat, unlink, rename, rm } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink, rename, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -7,7 +7,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import { safeResolve, assertSafeName } from '../util/paths.js';
 import { errors } from '../errors.js';
-import { SUBDIRS, type ComponentType, type BundleInfo, inspectBundle } from './bundle.js';
+import {
+  SUBDIRS,
+  type ComponentType,
+  type BundleInfo,
+  type ModelManifest,
+  inspectBundle,
+} from './bundle.js';
 
 const ALLOWED_EXT = new Set(['.gguf', '.safetensors', '.ckpt', '.pt', '.bin']);
 
@@ -95,6 +101,15 @@ export class ModelManager {
     } catch {
       return null;
     }
+  }
+
+  /** Write (or replace) the bundle's model.json manifest. */
+  async writeManifest(model: string, manifest: ModelManifest): Promise<void> {
+    assertSafeName(model);
+    const dir = safeResolve(this.config.modelsDir, model);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'model.json'), JSON.stringify(manifest, null, 2), 'utf8');
+    this.log.info({ model }, 'wrote model.json manifest');
   }
 
   /** Create an (empty) bundle directory with its component sub-directories. */

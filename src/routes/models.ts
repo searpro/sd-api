@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { errorResponseSchema } from '../schemas/generate.js';
+import type { ModelManifest } from '../models/bundle.js';
 
 const componentFileSchema = z.object({
   name: z.string(),
@@ -90,6 +91,35 @@ export async function modelRoutes(fastify: FastifyInstance): Promise<void> {
           .send({ error: { code: 'INTERNAL_ERROR', message: 'Failed to create bundle' } });
       }
       return reply.code(201).send(bundle);
+    },
+  );
+
+  // Write/replace a bundle's model.json manifest.
+  app.put<{ Params: { model: string } }>(
+    '/v1/models/:model/manifest',
+    {
+      schema: {
+        tags: ['models'],
+        summary: 'Write a bundle manifest (model.json)',
+        params: z.object({ model: z.string() }),
+        body: z.object({
+          name: z.string().optional(),
+          load: z.enum(['auto', 'model', 'diffusion-model']).optional(),
+          components: z.record(z.string()).optional(),
+          defaults: z.record(z.unknown()).optional(),
+        }),
+        response: { 200: bundleSchema, 400: errorResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      await app.models.writeManifest(req.params.model, req.body as unknown as ModelManifest);
+      const bundle = await app.models.get(req.params.model);
+      if (!bundle) {
+        return reply
+          .code(400)
+          .send({ error: { code: 'INTERNAL_ERROR', message: 'Failed to write manifest' } });
+      }
+      return reply.send(bundle);
     },
   );
 

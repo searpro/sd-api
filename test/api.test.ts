@@ -110,6 +110,35 @@ describe('models (bundles)', () => {
   });
 });
 
+describe('catalog', () => {
+  it('lists curated models (no network)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/catalog' });
+    expect(res.statusCode).toBe(200);
+    const ids = res.json().models.map((m: { id: string }) => m.id);
+    expect(ids).toContain('z-image-turbo');
+    expect(ids).toContain('flux1-dev');
+  });
+
+  it('404s for an unknown catalog model', async () => {
+    const res = await app.inject({ method: 'GET', url: '/v1/catalog/nope/files' });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('manifest', () => {
+  it('writes a bundle manifest and reflects it', async () => {
+    await app.inject({ method: 'POST', url: '/v1/models', payload: { model: 'manual' } });
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/v1/models/manual/manifest',
+      payload: { name: 'Manual Model', load: 'diffusion-model', defaults: { steps: 8 } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBe('Manual Model');
+    expect(res.json().loadMode).toBe('diffusion-model');
+  });
+});
+
 describe('jobs (Phase 4)', () => {
   it('runs a job to completion', async () => {
     const create = await app.inject({
