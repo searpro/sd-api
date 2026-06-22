@@ -195,9 +195,14 @@ Install flow (what the UI does, and you can script):
 2. `POST /v1/models/download` once per chosen component (checkpoint/vae/clip),
    streaming each weight into the bundle.
 
-Included models: Z-Image Turbo, Z-Image, FLUX.1 dev/schnell, Qwen-Image,
-Chroma, SD 3.5 Large. Extend by adding entries to `src/catalog/data.ts`. Set
-`HF_TOKEN` to raise the HuggingFace API rate limit used for the file listings.
+Included models (txt2img): SD 1.5 / 2.1, SDXL base / Turbo, SSD-1B, Segmind
+Vega, SD3 Medium, SD 3.5 Large, HiDream-O1-Image, FLUX.1 dev/schnell, FLUX.2
+dev/klein-4B/klein-9B, Chroma, Chroma1-Radiance, Lens, Qwen-Image, LongCat-Image,
+Ovis-Image, Anima, ERNIE-Image (+ Turbo), Boogu-Image, Z-Image (+ Turbo).
+Image-edit models (Kontext, Qwen-Image-Edit, …), video models (Wan, LTX-2.3),
+PiD and Ideogram4 are omitted because the generation pipeline here is txt2img.
+Extend by adding entries to `src/catalog/data.ts`. Set `HF_TOKEN` to raise the
+HuggingFace API rate limit used for the file listings.
 
 > Note: large weights (multi-GB) download synchronously per component; the UI
 > shows per-component progress while each completes.
