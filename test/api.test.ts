@@ -130,6 +130,15 @@ describe('outputs (Phase 6)', () => {
   });
 });
 
+describe('web UI', () => {
+  it('serves the frontend at /', async () => {
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('sd-api');
+  });
+});
+
 describe('docs (Phase 8)', () => {
   it('serves the OpenAPI document', async () => {
     const res = await app.inject({ method: 'GET', url: '/docs/json' });

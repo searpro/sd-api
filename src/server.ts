@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
+import fastifyStatic from '@fastify/static';
+import { fileURLToPath } from 'node:url';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -92,6 +94,14 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(modelRoutes);
   await app.register(jobRoutes);
   await app.register(outputRoutes);
+
+  // Thin web UI (static, no build step). Served at "/"; API routes above take
+  // precedence over the static wildcard. public/ sits next to src/ and dist/.
+  await app.register(fastifyStatic, {
+    root: fileURLToPath(new URL('../public', import.meta.url)),
+    prefix: '/',
+    index: ['index.html'],
+  });
 
   // Ensure runtime directories exist.
   await models.init();

@@ -17,6 +17,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | 6 | Image serving (binary or base64) | `GET /v1/outputs/:name` |
 | 7 | Config (file + env) | — |
 | 8 | OpenAPI 3.1 docs + Swagger UI | `GET /docs` |
+| UI | Thin web console (generation + model management) | `GET /` |
 
 ## Prerequisites
 
@@ -72,7 +73,22 @@ curl -X POST localhost:3000/v1/generate \
   -d '{"prompt":"a futuristic city","model":"sdxl-base.gguf","steps":20,"cfg_scale":7}'
 ```
 
-Interactive docs: <http://localhost:3000/docs>.
+Web console: <http://localhost:3000/> · Interactive API docs: <http://localhost:3000/docs>.
+
+## Web UI
+
+A dependency-free, single-file frontend is served at `/` (no build step —
+`public/index.html` talking to the same API). It covers:
+
+- **Generate** — pick a checkpoint, set prompt / negative prompt / steps /
+  CFG / width / height / seed / sampler, submit as an async job, and watch
+  live SSE progress (bar + step count + log tail) until the image renders.
+  Includes cancel.
+- **Models** — list installed models with size/type, delete them, and
+  download new ones by URL into `checkpoints/`, `vae/`, or `clip/`.
+
+It uses only the public endpoints (`/v1/jobs`, `/v1/jobs/:id/stream`,
+`/v1/models`, `/v1/outputs/...`), so it works against any deployment.
 
 ## Configuration (Phase 7)
 
@@ -204,6 +220,7 @@ src/
   jobs/             # in-memory job queue + manager
   routes/           # generate, jobs, models, outputs, health
   util/             # path safety, filename, validation
+public/             # thin web UI (single static index.html, no build step)
 test/               # vitest unit + integration tests (uses a fake `sd` binary)
 ```
 
