@@ -17,6 +17,8 @@ export interface CatalogModelSummary {
   name: string;
   description?: string;
   loadMode: 'model' | 'diffusion-model';
+  edit: boolean;
+  extraArgs?: string[];
   reference?: string;
   defaults?: CatalogModel['defaults'];
   components: CatalogComponentSummary[];
@@ -43,6 +45,8 @@ export class CatalogManager {
       name: m.name,
       description: m.description,
       loadMode: m.loadMode,
+      edit: m.edit ?? false,
+      extraArgs: m.extraArgs,
       reference: m.reference,
       defaults: m.defaults,
       components: m.components.map((c) => ({

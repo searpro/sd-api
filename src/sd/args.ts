@@ -26,7 +26,15 @@ export const WEIGHT_FLAG = {
   clip_vision: '--clip_vision',
   t5xxl: '--t5xxl',
   llm: '--llm',
+  llm_vision: '--llm_vision',
 } as const;
+
+/** Resolved, validated absolute paths for editing input images. */
+export interface InputImages {
+  init?: string;
+  mask?: string;
+  refs?: string[];
+}
 
 export interface BuildArgsInput {
   /** Generation parameters, with bundle defaults already merged in. */
@@ -35,6 +43,8 @@ export interface BuildArgsInput {
   bundle: ResolvedBundle;
   /** Absolute output image path. */
   outputPath: string;
+  /** Resolved input image paths for img2img / edit. */
+  images?: InputImages;
 }
 
 /**
@@ -43,7 +53,7 @@ export interface BuildArgsInput {
  * interpolation and prompts cannot inject extra flags.
  */
 export function buildArgs(input: BuildArgsInput): string[] {
-  const { params, bundle, outputPath } = input;
+  const { params, bundle, outputPath, images } = input;
   const args: string[] = [];
 
   // Checkpoint: a full model uses -m; a standalone diffusion model uses
@@ -63,6 +73,14 @@ export function buildArgs(input: BuildArgsInput): string[] {
     if (path) args.push(flag, path);
   }
 
+  // Image editing / img2img inputs.
+  if (images?.init) args.push('-i', images.init);
+  if (images?.mask) args.push('--mask', images.mask);
+  for (const ref of images?.refs ?? []) args.push('-r', ref);
+  if (params.strength !== undefined) args.push('--strength', String(params.strength));
+  if (params.img_cfg_scale !== undefined) args.push('--img-cfg-scale', String(params.img_cfg_scale));
+  if (params.increase_ref_index) args.push('--increase-ref-index');
+
   // Output.
   args.push('-o', outputPath);
 
@@ -77,6 +95,9 @@ export function buildArgs(input: BuildArgsInput): string[] {
   if (params.height !== undefined) args.push(FLAG_MAP.height, String(params.height));
   if (params.seed !== undefined) args.push(FLAG_MAP.seed, String(params.seed));
   if (params.sampler) args.push(FLAG_MAP.sampler, params.sampler);
+
+  // Model-specific extra flags from the bundle manifest.
+  for (const a of bundle.extraArgs) args.push(a);
 
   return args;
 }

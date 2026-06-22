@@ -5,6 +5,7 @@ dist/
 # Runtime data directories (created at startup)
 /data/outputs/
 /data/models/
+/data/inputs/
 /outputs/
 /models/
 

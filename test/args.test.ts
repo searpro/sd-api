@@ -11,6 +11,7 @@ const fullModel: ResolvedBundle = {
   checkpointPath: '/models/m.gguf',
   weights: {},
   defaults: {},
+  extraArgs: [],
 };
 
 const splitModel: ResolvedBundle = {
@@ -21,6 +22,7 @@ const splitModel: ResolvedBundle = {
   checkpointPath: '/models/z-image/checkpoint/z.gguf',
   weights: { vae: '/models/z-image/vae/v.sft', llm: '/models/z-image/clip/qwen.gguf' },
   defaults: {},
+  extraArgs: [],
 };
 
 describe('buildArgs', () => {
@@ -75,6 +77,32 @@ describe('buildArgs', () => {
     expect(args).toContain('euler_a');
     expect(args).toContain('-n');
     expect(args).toContain('bad');
+  });
+
+  it('wires img2img and edit reference images', () => {
+    const args = buildArgs({
+      params: { prompt: 'p', model: 'z-image', strength: 0.4, increase_ref_index: true, img_cfg_scale: 2 },
+      bundle: splitModel,
+      outputPath: '/x.png',
+      images: { init: '/in/a.png', mask: '/in/m.png', refs: ['/in/r1.png', '/in/r2.png'] },
+    });
+    expect(args[args.indexOf('-i') + 1]).toBe('/in/a.png');
+    expect(args[args.indexOf('--mask') + 1]).toBe('/in/m.png');
+    expect(args.filter((a) => a === '-r')).toHaveLength(2);
+    const refIdx = args.indexOf('-r');
+    expect(args[refIdx + 1]).toBe('/in/r1.png');
+    expect(args).toContain('--increase-ref-index');
+    expect(args[args.indexOf('--strength') + 1]).toBe('0.4');
+    expect(args[args.indexOf('--img-cfg-scale') + 1]).toBe('2');
+  });
+
+  it('appends manifest extra args', () => {
+    const args = buildArgs({
+      params: { prompt: 'p', model: 'q' },
+      bundle: { ...splitModel, extraArgs: ['--qwen-image-zero-cond-t', '--flow-shift', '3'] },
+      outputPath: '/x.png',
+    });
+    expect(args.slice(-3)).toEqual(['--qwen-image-zero-cond-t', '--flow-shift', '3']);
   });
 
   it('passes prompt as a discrete arg (no shell injection surface)', () => {

@@ -19,6 +19,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | 8 | OpenAPI 3.1 docs + Swagger UI | `GET /docs` |
 | UI | Thin web console (generation + model management) | `GET /` |
 | Catalog | Guided model downloads (format + quantization) | `GET /v1/catalog` |
+| Editing | img2img + reference-image editing (single/multi) | `POST /v1/inputs` |
 
 ## Prerequisites
 
@@ -206,6 +207,27 @@ HuggingFace API rate limit used for the file listings.
 
 > Note: large weights (multi-GB) download synchronously per component; the UI
 > shows per-component progress while each completes.
+
+## Image editing / img2img
+
+The same txt2img pipeline drives editing — you just pass reference image(s).
+
+1. Upload images: `POST /v1/inputs` (multipart `file`, one or more) →
+   `{ inputs: [{ name, size }] }`. Retrieve with `GET /v1/inputs/:name`.
+2. Reference them by name in a generation request:
+   - `ref_images: ["<name>", …]` → repeated `-r` (edit models: FLUX.1-Kontext,
+     Qwen-Image-Edit, …). `increase_ref_index: true` for multi-image edits
+     (Qwen-Image-Edit-2509).
+   - `init_image` + `strength` → `-i` / `--strength` (img2img).
+   - `mask` → `--mask` (inpaint). `img_cfg_scale` → `--img-cfg-scale`.
+
+Edit models in the catalog are flagged `edit: true` and install a `model.json`
+with any model-specific flags via `extra_args` (e.g. Qwen-Image-Edit-2511 sets
+`--qwen-image-zero-cond-t`). The web UI's Generate tab has an "Image editing /
+img2img" panel for uploading reference / init images.
+
+Catalog edit models: FLUX.1-Kontext-dev, Qwen-Image-Edit, Qwen-Image-Edit-2509
+(multi-ref), Qwen-Image-Edit-2511.
 
 ## API overview
 

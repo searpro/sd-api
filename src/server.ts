@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastifyStatic from '@fastify/static';
+import fastifyMultipart from '@fastify/multipart';
 import { fileURLToPath } from 'node:url';
 import {
   serializerCompiler,
@@ -22,6 +23,7 @@ import { modelRoutes } from './routes/models.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { jobRoutes } from './routes/jobs.js';
 import { outputRoutes } from './routes/outputs.js';
+import { inputRoutes } from './routes/inputs.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
@@ -59,6 +61,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         { name: 'jobs', description: 'Async job system' },
         { name: 'models', description: 'Model management' },
         { name: 'catalog', description: 'Downloadable model catalog' },
+        { name: 'inputs', description: 'Input images for img2img / editing' },
         { name: 'outputs', description: 'Generated images' },
         { name: 'system', description: 'Health & meta' },
       ],
@@ -93,11 +96,17 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
     });
   });
 
+  // File uploads (input images for img2img / edit).
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: 64 * 1024 * 1024, files: 16 },
+  });
+
   // Routes.
   await app.register(healthRoutes);
   await app.register(generateRoutes);
   await app.register(modelRoutes);
   await app.register(catalogRoutes);
+  await app.register(inputRoutes);
   await app.register(jobRoutes);
   await app.register(outputRoutes);
 

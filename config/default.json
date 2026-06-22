@@ -2,6 +2,7 @@
   "sd_binary_path": "sd",
   "models_dir": "./data/models",
   "outputs_dir": "./data/outputs",
+  "inputs_dir": "./data/inputs",
   "host": "0.0.0.0",
   "port": 3000,
   "max_concurrent_jobs": 2,

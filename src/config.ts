@@ -16,6 +16,7 @@ const configFileSchema = z
     sd_binary_path: z.string(),
     models_dir: z.string(),
     outputs_dir: z.string(),
+    inputs_dir: z.string(),
     host: z.string(),
     port: z.number().int().positive(),
     max_concurrent_jobs: z.number().int().positive(),
@@ -33,6 +34,7 @@ export interface Config {
   sdBinaryPath: string;
   modelsDir: string;
   outputsDir: string;
+  inputsDir: string;
   host: string;
   port: number;
   maxConcurrentJobs: number;
@@ -83,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sd_binary_path: env.SD_BINARY_PATH,
     models_dir: env.SD_MODELS_DIR,
     outputs_dir: env.SD_OUTPUTS_DIR,
+    inputs_dir: env.SD_INPUTS_DIR,
     host: env.SD_HOST,
     port: num(env.SD_PORT),
     max_concurrent_jobs: num(env.SD_MAX_CONCURRENT_JOBS),
@@ -104,6 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sdBinaryPath: parsed.sd_binary_path,
     modelsDir: resolve(process.cwd(), parsed.models_dir),
     outputsDir: resolve(process.cwd(), parsed.outputs_dir),
+    inputsDir: resolve(process.cwd(), parsed.inputs_dir),
     host: parsed.host,
     port: parsed.port,
     maxConcurrentJobs: parsed.max_concurrent_jobs,

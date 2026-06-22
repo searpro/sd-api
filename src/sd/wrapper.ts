@@ -108,6 +108,17 @@ export class SdWrapper extends EventEmitter {
     );
   }
 
+  /** Resolve an uploaded input image name to a validated absolute path. */
+  private async resolveInput(name: string): Promise<string> {
+    const path = safeResolve(this.config.inputsDir, name);
+    try {
+      await access(path, constants.R_OK);
+    } catch {
+      throw errors.inputNotFound(name);
+    }
+    return path;
+  }
+
   async generate(opts: GenerateOptions): Promise<GenerateResult> {
     const { params, onProgress, onLog, signal } = opts;
 
@@ -127,14 +138,35 @@ export class SdWrapper extends EventEmitter {
       height: params.height ?? bundle.defaults.height,
       seed: params.seed,
       sampler: params.sampler ?? (bundle.defaults.sampler as GenerateParams['sampler']),
+      init_image: params.init_image,
+      strength: params.strength,
+      mask: params.mask,
+      ref_images: params.ref_images,
+      increase_ref_index: params.increase_ref_index,
+      img_cfg_scale: params.img_cfg_scale,
+    };
+
+    // Resolve uploaded input images (img2img / edit) to validated paths.
+    const images = {
+      init: params.init_image ? await this.resolveInput(params.init_image) : undefined,
+      mask: params.mask ? await this.resolveInput(params.mask) : undefined,
+      refs: params.ref_images
+        ? await Promise.all(params.ref_images.map((r) => this.resolveInput(r)))
+        : undefined,
     };
 
     const imageName = uniqueImageName('png');
     const outputPath = safeResolve(this.config.outputsDir, imageName);
 
-    const args = buildArgs({ params: effective, bundle, outputPath });
+    const args = buildArgs({ params: effective, bundle, outputPath, images });
     this.log.info(
-      { model: bundle.id, loadMode: bundle.loadMode, weights: Object.keys(bundle.weights) },
+      {
+        model: bundle.id,
+        loadMode: bundle.loadMode,
+        weights: Object.keys(bundle.weights),
+        refs: images.refs?.length ?? 0,
+        init: Boolean(images.init),
+      },
       'resolved model bundle',
     );
     return this.run(args, outputPath, imageName, effective, { onProgress, onLog, signal });

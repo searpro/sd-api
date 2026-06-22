@@ -37,6 +37,10 @@ export interface CatalogModel {
   description?: string;
   /** How sd-cli loads the checkpoint. */
   loadMode: 'model' | 'diffusion-model';
+  /** Image-edit model: expects one or more reference images at generation. */
+  edit?: boolean;
+  /** Extra raw sd-cli flags written to the bundle manifest on install. */
+  extraArgs?: string[];
   /** Link to the upstream documentation page. */
   reference?: string;
   defaults?: {

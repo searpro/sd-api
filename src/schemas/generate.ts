@@ -33,6 +33,20 @@ export const generateSchema = z.object({
   height: z.number().int().min(64).optional(),
   seed: z.number().int().min(-1).optional(),
   sampler: z.enum(SAMPLERS).optional(),
+
+  // Image editing / img2img (names of files uploaded via POST /v1/inputs).
+  /** Init image for img2img. */
+  init_image: z.string().optional(),
+  /** Denoising strength for img2img (0..1, default sd-cli 0.75). */
+  strength: z.number().min(0).max(1).optional(),
+  /** Inpaint mask image. */
+  mask: z.string().optional(),
+  /** Reference image(s) for edit models (Kontext, Qwen-Image-Edit, …). */
+  ref_images: z.array(z.string()).max(16).optional(),
+  /** Auto-increase reference indices (Qwen-Image-Edit-2509 multi-ref). */
+  increase_ref_index: z.boolean().optional(),
+  /** Image guidance scale for inpaint / edit models. */
+  img_cfg_scale: z.number().min(0).max(30).optional(),
 });
 
 export type GenerateParams = z.infer<typeof generateSchema>;

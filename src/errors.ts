@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'BINARY_NOT_FOUND'
   | 'JOB_NOT_FOUND'
   | 'OUTPUT_NOT_FOUND'
+  | 'INPUT_NOT_FOUND'
   | 'INVALID_PATH'
   | 'DOWNLOAD_FAILED'
   | 'INTERNAL_ERROR';
@@ -52,6 +53,8 @@ export const errors = {
   jobNotFound: (id: string) => new AppError('JOB_NOT_FOUND', `Job not found: ${id}`, 404),
   outputNotFound: (name: string) =>
     new AppError('OUTPUT_NOT_FOUND', `Output not found: ${name}`, 404),
+  inputNotFound: (name: string) =>
+    new AppError('INPUT_NOT_FOUND', `Input image not found: ${name}`, 404),
   invalidPath: (msg: string) => new AppError('INVALID_PATH', msg, 400),
   binaryNotFound: (path: string) =>
     new AppError('BINARY_NOT_FOUND', `stable-diffusion.cpp binary not found: ${path}`, 500),

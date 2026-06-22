@@ -169,6 +169,70 @@ describe('jobs (Phase 4)', () => {
   });
 });
 
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+  'base64',
+);
+
+function multipart(boundary: string, filename: string, content: Buffer): Buffer {
+  return Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: image/png\r\n\r\n`,
+    ),
+    content,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+}
+
+describe('inputs + image editing', () => {
+  it('uploads an input image and uses it as a reference for generation', async () => {
+    const boundary = '----sdapitest';
+    const up = await app.inject({
+      method: 'POST',
+      url: '/v1/inputs',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: multipart(boundary, 'ref.png', PNG),
+    });
+    expect(up.statusCode).toBe(201);
+    const name = up.json().inputs[0].name;
+    expect(name).toMatch(/\.png$/);
+
+    // The uploaded image is retrievable.
+    const get = await app.inject({ method: 'GET', url: `/v1/inputs/${name}` });
+    expect(get.statusCode).toBe(200);
+
+    // Generate using it as a reference image (edit).
+    const gen = await app.inject({
+      method: 'POST',
+      url: '/v1/generate',
+      payload: { prompt: 'edit it', model: 'test', ref_images: [name], steps: 2 },
+    });
+    expect(gen.statusCode).toBe(200);
+    expect(gen.json().image_url).toMatch(/^\/v1\/outputs\//);
+  });
+
+  it('rejects a missing reference image with INPUT_NOT_FOUND', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/generate',
+      payload: { prompt: 'x', model: 'test', ref_images: ['nope.png'] },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('INPUT_NOT_FOUND');
+  });
+
+  it('rejects a non-image upload', async () => {
+    const boundary = '----sdapitest2';
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/inputs',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: multipart(boundary, 'evil.txt', Buffer.from('nope')),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe('outputs (Phase 6)', () => {
   it('serves a generated image as base64', async () => {
     const gen = await app.inject({

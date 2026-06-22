@@ -32,7 +32,7 @@ export const SUBDIRS = {
 export type ComponentType = keyof typeof SUBDIRS; // checkpoint | vae | clip
 
 /** Roles within the clip/ directory that map to specific sd-cli flags. */
-export type ClipRole = 'clip_l' | 'clip_g' | 'clip_vision' | 't5xxl' | 'llm';
+export type ClipRole = 'clip_l' | 'clip_g' | 'clip_vision' | 't5xxl' | 'llm' | 'llm_vision';
 
 /** How the checkpoint is loaded by sd-cli. */
 export type LoadMode = 'model' | 'diffusion-model';
@@ -56,6 +56,8 @@ export interface ModelManifest {
     sampler?: string;
     negative_prompt?: string;
   };
+  /** Extra raw sd-cli flags appended verbatim (e.g. ["--qwen-image-zero-cond-t"]). */
+  extra_args?: string[];
 }
 
 export interface ResolvedBundle {
@@ -66,6 +68,7 @@ export interface ResolvedBundle {
   checkpointPath: string;
   weights: Partial<Record<ClipRole | 'vae', string>>;
   defaults: NonNullable<ModelManifest['defaults']>;
+  extraArgs: string[];
 }
 
 export interface ComponentFile {
@@ -120,6 +123,7 @@ async function listFiles(dir: string): Promise<{ name: string; size: number }[]>
 /** Heuristically map a clip/ filename to its text-encoder role. */
 export function detectClipRole(filename: string): ClipRole | null {
   const n = filename.toLowerCase();
+  if (/mmproj/.test(n)) return 'llm_vision';
   if (/clip[_-]?vision|clip_vit/.test(n)) return 'clip_vision';
   if (/clip[_-]?l\b|clip[_-]?l[._-]|clip_l/.test(n)) return 'clip_l';
   if (/clip[_-]?g\b|clip[_-]?g[._-]|clip_g/.test(n)) return 'clip_g';
@@ -187,7 +191,14 @@ function pickFile(
 function manifestRoleFor(manifest: ModelManifest | null, filename: string): ClipRole | null {
   const comps = manifest?.components;
   if (!comps) return null;
-  for (const role of ['clip_l', 'clip_g', 'clip_vision', 't5xxl', 'llm'] as ClipRole[]) {
+  for (const role of [
+    'clip_l',
+    'clip_g',
+    'clip_vision',
+    't5xxl',
+    'llm',
+    'llm_vision',
+  ] as ClipRole[]) {
     if (comps[role] === filename) return role;
   }
   return null;
@@ -230,6 +241,7 @@ export async function resolveBundle(modelsDir: string, id: string): Promise<Reso
       checkpointPath: target,
       weights: {},
       defaults: {},
+      extraArgs: [],
     };
   }
 
@@ -264,5 +276,6 @@ export async function resolveBundle(modelsDir: string, id: string): Promise<Reso
     checkpointPath: resolve(dir, SUBDIRS.checkpoint, checkpoint.name),
     weights,
     defaults: manifest?.defaults ?? {},
+    extraArgs: manifest?.extra_args ?? [],
   };
 }

@@ -469,6 +469,146 @@ export const CATALOG: CatalogModel[] = [
     ],
   },
 
+  // ===== Image-edit models (require reference image[s], -r) ==================
+  {
+    id: 'flux1-kontext-dev',
+    name: 'FLUX.1 Kontext dev (edit)',
+    description: 'FLUX.1 Kontext image editing. Provide a reference image.',
+    loadMode: 'diffusion-model',
+    edit: true,
+    reference: `${DOCS}/kontext.md`,
+    defaults: { cfg_scale: 1, sampler: 'euler' },
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'QuantStack/FLUX.1-Kontext-dev-GGUF' },
+          safetensors: { repo: 'black-forest-labs/FLUX.1-Kontext-dev', match: 'flux1-kontext-dev' },
+        },
+      },
+      { role: 'vae', bundleType: 'vae', label: 'VAE (ae)', required: true, quantizable: false, sources: { safetensors: FLUX1_AE } },
+      { role: 'clip_l', bundleType: 'clip', label: 'CLIP-L', required: true, quantizable: false, sources: { safetensors: { repo: FLUX_TEXT_ENCODERS, match: 'clip_l' } } },
+      { role: 't5xxl', bundleType: 'clip', label: 'T5-XXL', required: true, quantizable: false, sources: { safetensors: { repo: FLUX_TEXT_ENCODERS, match: 't5xxl' } } },
+    ],
+  },
+  {
+    id: 'qwen-image-edit',
+    name: 'Qwen-Image-Edit (edit)',
+    description: 'Qwen-Image editing. Provide a reference image.',
+    loadMode: 'diffusion-model',
+    edit: true,
+    reference: `${DOCS}/qwen_image_edit.md`,
+    defaults: { cfg_scale: 2.5, sampler: 'euler' },
+    extraArgs: ['--flow-shift', '3'],
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'QuantStack/Qwen-Image-Edit-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Qwen-Image-Edit_ComfyUI', path: 'split_files/diffusion_models', match: 'edit' },
+        },
+      },
+      { role: 'vae', bundleType: 'vae', label: 'VAE', required: true, quantizable: false, sources: { safetensors: { repo: 'Comfy-Org/Qwen-Image_ComfyUI', path: 'split_files/vae' } } },
+      {
+        role: 'llm',
+        bundleType: 'clip',
+        label: 'Qwen2.5-VL-7B text encoder',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'mradermacher/Qwen2.5-VL-7B-Instruct-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Qwen-Image_ComfyUI', path: 'split_files/text_encoders' },
+        },
+      },
+    ],
+  },
+  {
+    id: 'qwen-image-edit-2509',
+    name: 'Qwen-Image-Edit 2509 (multi-ref edit)',
+    description: 'Qwen-Image-Edit 2509 — supports multiple reference images. With a GGUF text encoder, also add the mmproj (llm_vision).',
+    loadMode: 'diffusion-model',
+    edit: true,
+    reference: `${DOCS}/qwen_image_edit.md`,
+    defaults: { cfg_scale: 2.5, sampler: 'euler' },
+    extraArgs: ['--flow-shift', '3'],
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'QuantStack/Qwen-Image-Edit-2509-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Qwen-Image-Edit_ComfyUI', path: 'split_files/diffusion_models', match: '2509' },
+        },
+      },
+      { role: 'vae', bundleType: 'vae', label: 'VAE', required: true, quantizable: false, sources: { safetensors: { repo: 'Comfy-Org/Qwen-Image_ComfyUI', path: 'split_files/vae' } } },
+      {
+        role: 'llm',
+        bundleType: 'clip',
+        label: 'Qwen2.5-VL-7B text encoder',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'mradermacher/Qwen2.5-VL-7B-Instruct-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Qwen-Image_ComfyUI', path: 'split_files/text_encoders' },
+        },
+      },
+      {
+        role: 'llm_vision',
+        bundleType: 'clip',
+        label: 'mmproj (only with GGUF text encoder)',
+        required: false,
+        quantizable: true,
+        sources: { gguf: { repo: 'mradermacher/Qwen2.5-VL-7B-Instruct-GGUF', match: 'mmproj' } },
+      },
+    ],
+  },
+  {
+    id: 'qwen-image-edit-2511',
+    name: 'Qwen-Image-Edit 2511 (edit)',
+    description: 'Qwen-Image-Edit 2511. Runs with --qwen-image-zero-cond-t (set automatically).',
+    loadMode: 'diffusion-model',
+    edit: true,
+    reference: `${DOCS}/qwen_image_edit.md`,
+    defaults: { cfg_scale: 2.5, sampler: 'euler' },
+    extraArgs: ['--flow-shift', '3', '--qwen-image-zero-cond-t'],
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'unsloth/Qwen-Image-Edit-2511-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Qwen-Image-Edit_ComfyUI', path: 'split_files/diffusion_models', match: '2511' },
+        },
+      },
+      { role: 'vae', bundleType: 'vae', label: 'VAE', required: true, quantizable: false, sources: { safetensors: { repo: 'Comfy-Org/Qwen-Image_ComfyUI', path: 'split_files/vae' } } },
+      {
+        role: 'llm',
+        bundleType: 'clip',
+        label: 'Qwen2.5-VL-7B text encoder',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'mradermacher/Qwen2.5-VL-7B-Instruct-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Qwen-Image_ComfyUI', path: 'split_files/text_encoders' },
+        },
+      },
+    ],
+  },
+
   // ===== LongCat / Ovis / Anima / ERNIE / Boogu ==============================
   {
     id: 'longcat-image',

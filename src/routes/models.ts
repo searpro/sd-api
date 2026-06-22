@@ -107,6 +107,7 @@ export async function modelRoutes(fastify: FastifyInstance): Promise<void> {
           load: z.enum(['auto', 'model', 'diffusion-model']).optional(),
           components: z.record(z.string()).optional(),
           defaults: z.record(z.unknown()).optional(),
+          extra_args: z.array(z.string()).optional(),
         }),
         response: { 200: bundleSchema, 400: errorResponseSchema },
       },

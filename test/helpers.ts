@@ -19,7 +19,9 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
   const root = await mkdtemp(join(tmpdir(), 'sd-api-test-'));
   const modelsDir = join(root, 'models');
   const outputsDir = join(root, 'outputs');
+  const inputsDir = join(root, 'inputs');
   await mkdir(outputsDir, { recursive: true });
+  await mkdir(inputsDir, { recursive: true });
 
   // Seed a split bundle "test" with checkpoint + vae + clip(llm) components.
   await mkdir(join(modelsDir, 'test', 'checkpoint'), { recursive: true });
@@ -37,6 +39,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     sdBinaryPath,
     modelsDir,
     outputsDir,
+    inputsDir,
     host: '127.0.0.1',
     port: 0,
     maxConcurrentJobs: 2,
