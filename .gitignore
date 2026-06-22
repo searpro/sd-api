@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.log
+
+# Runtime data directories (created at startup)
+/data/outputs/
+/data/models/
+/outputs/
+/models/
+
+# Local env / config overrides
+.env
+config/local.json
