@@ -20,10 +20,41 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 
 ## Prerequisites
 
-1. Build the `stable-diffusion.cpp` CLI per its
-   [build instructions](https://github.com/leejet/stable-diffusion.cpp#build) and note the
-   path to the resulting `sd` executable.
-2. Node.js >= 20.
+- Node.js >= 20.
+
+The `stable-diffusion.cpp` CLI is **not required up front**: on startup the
+server checks whether the configured binary is available and, if not,
+downloads the prebuilt release matching the host OS/arch (see
+[Binary auto-install](#binary-auto-install)). To use your own build instead,
+point `SD_BINARY_PATH` at it and the download is skipped.
+
+## Binary auto-install
+
+When the app initializes, `SdWrapper.ensureBinary()` runs:
+
+1. **Check** if `SD_BINARY_PATH` resolves to an executable — either an explicit
+   path or a bare command found on `PATH`.
+2. If it does, use it. If not and `SD_AUTO_INSTALL` is enabled, query the
+   [stable-diffusion.cpp releases](https://github.com/leejet/stable-diffusion.cpp/releases),
+   select the asset for `process.platform` / `process.arch` (and `SD_ACCEL`),
+   download + extract it under `SD_INSTALL_DIR`, and repoint the config at the
+   unpacked CLI for this process.
+3. If the binary is still unavailable (e.g. offline, auto-install off), the
+   server still boots — only generation fails until a binary is present.
+
+Notes:
+- Asset names embed drifting version numbers, so selection matches by
+  OS/arch/accel keyword rather than an exact filename
+  ([`src/sd/release.ts`](src/sd/release.ts)).
+- The CLI binary is named `sd-cli` and ships beside a shared library
+  (`libstable-diffusion.so` / `.dylib` / `.dll`) whose `RUNPATH` points at the
+  build machine. The whole archive is extracted in place and the binary's own
+  directory is added to the loader path (`LD_LIBRARY_PATH` / `DYLD_*` / `PATH`)
+  when spawning, so it runs from any working directory.
+- The GitHub API rate-limits unauthenticated requests to 60/hr. Set
+  `GITHUB_TOKEN` (or `GH_TOKEN`) to raise that to 5000/hr if you hit it.
+- `SD_ACCEL` selects the hardware backend: `cpu` (default), `vulkan`, `cuda`,
+  or `rocm`. The matching accelerated build is chosen when available.
 
 ## Quick start
 
@@ -49,7 +80,11 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 
 | Env var | Config key | Default | Meaning |
 | ------- | ---------- | ------- | ------- |
-| `SD_BINARY_PATH` | `sd_binary_path` | `sd` | Path to the `sd` executable (or a bare command on `PATH`) |
+| `SD_BINARY_PATH` | `sd_binary_path` | `sd` | Path to the CLI binary (or a bare command on `PATH`) |
+| `SD_AUTO_INSTALL` | `auto_install` | `true` | Download a prebuilt release if the binary is missing |
+| `SD_INSTALL_DIR` | `install_dir` | `./data/bin` | Where downloaded binaries are unpacked |
+| `SD_RELEASE_TAG` | `release_tag` | `latest` | Release to install (`latest` or a specific tag) |
+| `SD_ACCEL` | `accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
 | `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root of `checkpoints/`, `vae/`, `clip/` |
 | `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images |
 | `SD_HOST` / `SD_PORT` | `host` / `port` | `0.0.0.0` / `3000` | Listen address |
@@ -57,6 +92,7 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_JOB_TIMEOUT_MS` | `job_timeout_ms` | `600000` | Per-process hard timeout |
 | `SD_MAX_IMAGE_DIM` | `max_image_dim` | `2048` | Max width/height accepted |
 | `SD_LOG_LEVEL` | `log_level` | `info` | pino level |
+| `GITHUB_TOKEN` | — | — | Optional; raises GitHub API rate limit for auto-install |
 
 ## Models directory layout (Phase 3)
 
@@ -162,7 +198,8 @@ src/
   config.ts         # config resolution (file + env, zod-validated)
   errors.ts         # AppError + structured error codes
   schemas/          # zod request/response schemas
-  sd/               # CLI wrapper: args mapping, spawn, progress parsing
+  sd/               # CLI wrapper, arg mapping, progress parsing,
+                    #   release selection + auto-installer
   models/           # model manager (list/download/delete)
   jobs/             # in-memory job queue + manager
   routes/           # generate, jobs, models, outputs, health

@@ -22,6 +22,10 @@ const configFileSchema = z
     job_timeout_ms: z.number().int().positive(),
     max_image_dim: z.number().int().positive(),
     log_level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
+    auto_install: z.boolean(),
+    install_dir: z.string(),
+    release_tag: z.string(),
+    accel: z.enum(['cpu', 'vulkan', 'cuda', 'rocm']),
   })
   .partial();
 
@@ -35,6 +39,14 @@ export interface Config {
   jobTimeoutMs: number;
   maxImageDim: number;
   logLevel: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+  /** Download a prebuilt sd binary at startup if none is found. */
+  autoInstall: boolean;
+  /** Where auto-installed binaries are unpacked. */
+  installDir: string;
+  /** Release tag to install ("latest" or e.g. "master-714-b12098f"). */
+  releaseTag: string;
+  /** Hardware backend to prefer when selecting a release asset. */
+  accel: 'cpu' | 'vulkan' | 'cuda' | 'rocm';
 }
 
 function readJsonIfExists(path: string): Record<string, unknown> {
@@ -51,6 +63,13 @@ function num(value: string | undefined): number | undefined {
   const n = Number(value);
   if (Number.isNaN(n)) throw new Error(`Expected numeric env value but got "${value}"`);
   return n;
+}
+
+function bool(value: string | undefined): boolean | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (['1', 'true', 'yes', 'on'].includes(value.toLowerCase())) return true;
+  if (['0', 'false', 'no', 'off'].includes(value.toLowerCase())) return false;
+  throw new Error(`Expected boolean env value but got "${value}"`);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -70,6 +89,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     job_timeout_ms: num(env.SD_JOB_TIMEOUT_MS),
     max_image_dim: num(env.SD_MAX_IMAGE_DIM),
     log_level: env.SD_LOG_LEVEL,
+    auto_install: bool(env.SD_AUTO_INSTALL),
+    install_dir: env.SD_INSTALL_DIR,
+    release_tag: env.SD_RELEASE_TAG,
+    accel: env.SD_ACCEL,
   });
 
   const merged = { ...fileConfig, ...stripUndefined(envConfig) };
@@ -87,6 +110,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     jobTimeoutMs: parsed.job_timeout_ms,
     maxImageDim: parsed.max_image_dim,
     logLevel: parsed.log_level,
+    autoInstall: parsed.auto_install,
+    installDir: resolve(process.cwd(), parsed.install_dir),
+    releaseTag: parsed.release_tag,
+    accel: parsed.accel,
   };
 }
 

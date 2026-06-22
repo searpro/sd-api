@@ -3,12 +3,13 @@ import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, join, delimiter, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import type { GenerateParams } from '../schemas/generate.js';
 import { buildArgs } from './args.js';
 import { parseProgress, type StepProgress } from './progress.js';
+import { SdInstaller } from './installer.js';
 import { safeResolve } from '../util/paths.js';
 import { uniqueImageName } from '../util/filename.js';
 import { errors, AppError } from '../errors.js';
@@ -42,18 +43,67 @@ export class SdWrapper extends EventEmitter {
     super();
   }
 
-  /** Verify the binary is invokable; throws BINARY_NOT_FOUND otherwise. */
-  async checkBinary(): Promise<void> {
+  /** True if the configured binary exists and is executable (path or on PATH). */
+  async isBinaryAvailable(): Promise<boolean> {
     const bin = this.config.sdBinaryPath;
-    // If a path-like value is given, confirm it exists and is executable.
-    if (bin.includes('/')) {
+    if (bin.includes('/') || bin.includes('\\')) {
       try {
         await access(resolve(bin), constants.X_OK);
+        return true;
       } catch {
-        throw errors.binaryNotFound(bin);
+        return false;
       }
     }
-    // Bare command names are left to PATH resolution at spawn time.
+    // Bare command name: search PATH.
+    const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+    const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+    for (const dir of pathDirs) {
+      for (const ext of exts) {
+        try {
+          await access(join(dir, bin + ext), constants.X_OK);
+          return true;
+        } catch {
+          // keep looking
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Ensure a usable binary exists. If none is found and auto-install is enabled,
+   * download the matching stable-diffusion.cpp release and point the config at it.
+   * Throws BINARY_NOT_FOUND when unavailable and auto-install is off or fails.
+   */
+  async ensureBinary(signal?: AbortSignal): Promise<void> {
+    if (await this.isBinaryAvailable()) {
+      this.log.info({ binary: this.config.sdBinaryPath }, 'stable-diffusion.cpp binary found');
+      return;
+    }
+
+    if (!this.config.autoInstall) {
+      throw errors.binaryNotFound(this.config.sdBinaryPath);
+    }
+
+    this.log.warn(
+      { binary: this.config.sdBinaryPath, accel: this.config.accel, tag: this.config.releaseTag },
+      'stable-diffusion.cpp binary not found — downloading a prebuilt release',
+    );
+    const installer = new SdInstaller(
+      {
+        installDir: this.config.installDir,
+        releaseTag: this.config.releaseTag,
+        accel: this.config.accel,
+      },
+      this.log,
+    );
+    const result = await installer.install(signal);
+    // Repoint config at the freshly installed binary for this process.
+    this.config.sdBinaryPath = result.binaryPath;
+    this.log.info(
+      { binaryPath: result.binaryPath, tag: result.tag, asset: result.asset },
+      'stable-diffusion.cpp ready',
+    );
   }
 
   /** Resolve a checkpoint model name to an absolute, validated path. */
@@ -103,6 +153,33 @@ export class SdWrapper extends EventEmitter {
     return this.run(args, outputPath, imageName, { onProgress, onLog, signal });
   }
 
+  /**
+   * Build the child environment, adding the binary's own directory to the
+   * dynamic-library search path. Prebuilt releases ship the CLI next to its
+   * shared library (e.g. libstable-diffusion.so) but their RUNPATH points at
+   * the build machine, so we must help the loader find the sibling lib.
+   */
+  private spawnEnv(binaryPath: string): NodeJS.ProcessEnv {
+    if (!binaryPath.includes('/') && !binaryPath.includes('\\')) {
+      // Bare command resolved via PATH — assume libs are already discoverable.
+      return process.env;
+    }
+    const binDir = dirname(resolve(binaryPath));
+    const env = { ...process.env };
+    const prepend = (key: string) => {
+      env[key] = env[key] ? `${binDir}${delimiter}${env[key]}` : binDir;
+    };
+    if (process.platform === 'darwin') {
+      prepend('DYLD_LIBRARY_PATH');
+      prepend('DYLD_FALLBACK_LIBRARY_PATH');
+    } else if (process.platform === 'win32') {
+      prepend('PATH'); // Windows resolves DLLs from PATH (and the exe dir).
+    } else {
+      prepend('LD_LIBRARY_PATH');
+    }
+    return env;
+  }
+
   private run(
     args: string[],
     outputPath: string,
@@ -114,7 +191,10 @@ export class SdWrapper extends EventEmitter {
     this.log.info({ bin: sdBinaryPath, args }, 'spawning stable-diffusion.cpp');
 
     return new Promise<GenerateResult>((resolvePromise, reject) => {
-      const child = spawn(sdBinaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(sdBinaryPath, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: this.spawnEnv(sdBinaryPath),
+      });
 
       let settled = false;
       const stderrTail: string[] = [];

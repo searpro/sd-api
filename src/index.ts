@@ -5,12 +5,15 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const app = await buildServer(config);
 
-  // Warn early if the binary is not reachable, but don't refuse to boot:
-  // model management and docs are still useful without it.
+  // Ensure a usable sd binary exists, auto-installing a prebuilt release if
+  // configured. Non-fatal: model management and docs still work without it.
   try {
-    await app.sd.checkBinary();
+    await app.sd.ensureBinary();
   } catch (err) {
-    app.log.warn({ err: (err as Error).message }, 'stable-diffusion.cpp binary check failed');
+    app.log.warn(
+      { err: (err as Error).message },
+      'stable-diffusion.cpp binary unavailable; generation will fail until it is installed',
+    );
   }
 
   const close = async (signal: string) => {

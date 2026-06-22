@@ -38,6 +38,10 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     jobTimeoutMs: 10000,
     maxImageDim: 2048,
     logLevel: 'fatal',
+    autoInstall: false,
+    installDir: join(root, 'bin'),
+    releaseTag: 'latest',
+    accel: 'cpu',
     ...overrides,
   };
 }

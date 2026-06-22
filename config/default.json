@@ -7,5 +7,9 @@
   "max_concurrent_jobs": 2,
   "job_timeout_ms": 600000,
   "max_image_dim": 2048,
-  "log_level": "info"
+  "log_level": "info",
+  "auto_install": true,
+  "install_dir": "./data/bin",
+  "release_tag": "latest",
+  "accel": "cpu"
 }
