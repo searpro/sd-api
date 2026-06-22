@@ -3,13 +3,14 @@ import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { resolve, extname, join, delimiter, dirname } from 'node:path';
+import { resolve, join, delimiter, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import type { GenerateParams } from '../schemas/generate.js';
 import { buildArgs } from './args.js';
 import { parseProgress, type StepProgress } from './progress.js';
 import { SdInstaller } from './installer.js';
+import { resolveBundle } from '../models/bundle.js';
 import { safeResolve } from '../util/paths.js';
 import { uniqueImageName } from '../util/filename.js';
 import { errors, AppError } from '../errors.js';
@@ -18,7 +19,8 @@ export interface GenerateResult {
   imagePath: string;
   imageName: string;
   durationMs: number;
-  seed?: number;
+  /** Effective parameters used (request values merged with bundle defaults). */
+  params: GenerateParams;
 }
 
 export interface GenerateOptions {
@@ -106,51 +108,36 @@ export class SdWrapper extends EventEmitter {
     );
   }
 
-  /** Resolve a checkpoint model name to an absolute, validated path. */
-  async resolveModel(name: string): Promise<string> {
-    const dir = resolve(this.config.modelsDir, 'checkpoints');
-    const path = safeResolve(dir, name);
-    if (extname(name).toLowerCase() !== '.gguf') {
-      // Allow non-gguf single-file checkpoints too, but warn on unknown ext.
-      this.log.debug({ name }, 'model extension is not .gguf');
-    }
-    try {
-      await access(path, constants.R_OK);
-    } catch {
-      throw errors.modelNotFound(name);
-    }
-    return path;
-  }
-
-  /** Resolve an optional weight file (vae/clip) within its subdirectory. */
-  private async resolveWeight(subdir: string, name: string): Promise<string> {
-    const dir = resolve(this.config.modelsDir, subdir);
-    const path = safeResolve(dir, name);
-    try {
-      await access(path, constants.R_OK);
-    } catch {
-      throw errors.missingWeights(`Missing ${subdir} weight: ${name}`);
-    }
-    return path;
-  }
-
   async generate(opts: GenerateOptions): Promise<GenerateResult> {
     const { params, onProgress, onLog, signal } = opts;
 
     await mkdir(this.config.outputsDir, { recursive: true });
-    const modelPath = await this.resolveModel(params.model);
 
-    const weights: Record<string, string> = {};
-    if (params.vae) weights.vae = await this.resolveWeight('vae', params.vae);
-    if (params.clip_l) weights.clip_l = await this.resolveWeight('clip', params.clip_l);
-    if (params.clip_g) weights.clip_g = await this.resolveWeight('clip', params.clip_g);
-    if (params.t5xxl) weights.t5xxl = await this.resolveWeight('clip', params.t5xxl);
+    // Resolve the model bundle: checkpoint + auto-wired vae / text encoders.
+    const bundle = await resolveBundle(this.config.modelsDir, params.model);
+
+    // Merge manifest defaults under the explicit request params.
+    const effective: GenerateParams = {
+      prompt: params.prompt,
+      model: params.model,
+      negative_prompt: params.negative_prompt ?? bundle.defaults.negative_prompt,
+      steps: params.steps ?? bundle.defaults.steps,
+      cfg_scale: params.cfg_scale ?? bundle.defaults.cfg_scale,
+      width: params.width ?? bundle.defaults.width,
+      height: params.height ?? bundle.defaults.height,
+      seed: params.seed,
+      sampler: params.sampler ?? (bundle.defaults.sampler as GenerateParams['sampler']),
+    };
 
     const imageName = uniqueImageName('png');
     const outputPath = safeResolve(this.config.outputsDir, imageName);
 
-    const args = buildArgs({ params, modelPath, outputPath, weights });
-    return this.run(args, outputPath, imageName, { onProgress, onLog, signal });
+    const args = buildArgs({ params: effective, bundle, outputPath });
+    this.log.info(
+      { model: bundle.id, loadMode: bundle.loadMode, weights: Object.keys(bundle.weights) },
+      'resolved model bundle',
+    );
+    return this.run(args, outputPath, imageName, effective, { onProgress, onLog, signal });
   }
 
   /**
@@ -184,6 +171,7 @@ export class SdWrapper extends EventEmitter {
     args: string[],
     outputPath: string,
     imageName: string,
+    params: GenerateParams,
     cb: Pick<GenerateOptions, 'onProgress' | 'onLog' | 'signal'>,
   ): Promise<GenerateResult> {
     const { sdBinaryPath, jobTimeoutMs } = this.config;
@@ -267,16 +255,26 @@ export class SdWrapper extends EventEmitter {
               }),
             );
           }
-          finish(null, { imagePath: outputPath, imageName, durationMs: Date.now() - started });
+          finish(null, { imagePath: outputPath, imageName, durationMs: Date.now() - started, params });
         } else {
+          const reason = extractFailureReason(stderrTail);
           finish(
             errors.generationFailed(
-              `stable-diffusion.cpp exited with code ${code ?? 'null'}${sig ? ` (signal ${sig})` : ''}`,
-              { exitCode: code, signal: sig, stderr: stderrTail.slice(-10) },
+              `stable-diffusion.cpp exited with code ${code ?? 'null'}${sig ? ` (signal ${sig})` : ''}` +
+                (reason ? `: ${reason}` : ''),
+              { exitCode: code, signal: sig, stderr: stderrTail.slice(-15) },
             ),
           );
         }
       });
     });
   }
+}
+
+/** Pull the most informative line(s) out of the process's stderr tail. */
+function extractFailureReason(stderr: string[]): string | null {
+  const meaningful = stderr.filter((l) => /error|fail|fatal|cannot|unable|missing|not found|unsupported|assert/i.test(l));
+  const picked = (meaningful.length > 0 ? meaningful : stderr).slice(-3);
+  const joined = picked.join(' | ').trim();
+  return joined.length > 0 ? joined.slice(0, 500) : null;
 }

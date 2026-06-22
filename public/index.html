@@ -142,7 +142,7 @@
         <div class="panel">
           <h2>Parameters</h2>
           <form id="genForm">
-            <label for="model">Checkpoint</label>
+            <label for="model">Model</label>
             <select id="model" required></select>
 
             <label for="prompt">Prompt</label>
@@ -184,20 +184,33 @@
       <!-- MODELS -->
       <section id="tab-models" class="grid hidden">
         <div class="panel">
-          <h2>Download model</h2>
+          <h2>Add component</h2>
+          <p style="color:var(--muted);font-size:12px;margin:0 0 4px;">
+            Each model is a bundle with its own <code>checkpoint</code>, <code>vae</code> and
+            <code>clip</code> (text-encoder) files. Download into a new or existing model.
+          </p>
           <form id="dlForm">
-            <label for="dlUrl">URL</label>
-            <input id="dlUrl" type="url" placeholder="https://…/model.gguf" required />
-            <label for="dlType">Type</label>
+            <label for="dlModel">Model name</label>
+            <input id="dlModel" list="modelList" placeholder="e.g. z-image-turbo" required />
+            <datalist id="modelList"></datalist>
+            <label for="dlType">Component</label>
             <select id="dlType">
-              <option value="checkpoint">checkpoint</option>
+              <option value="checkpoint">checkpoint (diffusion model)</option>
               <option value="vae">vae</option>
-              <option value="clip">clip</option>
+              <option value="clip">clip (clip_l / t5xxl / llm …)</option>
             </select>
+            <label for="dlUrl">URL</label>
+            <input id="dlUrl" type="url" placeholder="https://…/file.gguf" required />
             <label for="dlName">Filename (optional)</label>
             <input id="dlName" placeholder="inferred from URL" />
-            <button class="primary" id="dlBtn" type="submit">Download</button>
+            <button class="primary" id="dlBtn" type="submit">Download into bundle</button>
           </form>
+          <p style="color:var(--muted);font-size:11.5px;margin-top:12px;line-height:1.5;">
+            Split models (e.g. Z-Image Turbo) are auto-detected: a bundle with a vae/clip is
+            loaded via <code>--diffusion-model</code> with its VAE and text encoder wired in.
+            Component roles are inferred from filenames (clip_l, t5xxl, qwen→llm, …); drop a
+            <code>model.json</code> in the bundle to override.
+          </p>
         </div>
 
         <div class="panel">
@@ -205,10 +218,7 @@
             <h2 style="margin:0;">Installed models</h2>
             <button class="ghost" id="refreshModels" type="button">Refresh</button>
           </div>
-          <table>
-            <thead><tr><th>Name</th><th>Type</th><th>Size</th><th></th></tr></thead>
-            <tbody id="modelRows"></tbody>
-          </table>
+          <div id="modelCards"></div>
           <div class="empty hidden" id="modelsEmpty">No models installed yet.</div>
         </div>
       </section>
@@ -279,16 +289,19 @@
         const prev = sel.value;
         try {
           const { models } = await api('/v1/models');
-          const cps = models.filter((m) => m.type === 'checkpoint');
+          const ready = models.filter((m) => m.ready);
           sel.innerHTML = '';
-          if (cps.length === 0) {
-            sel.innerHTML = '<option value="">— no checkpoints (add one in Models) —</option>';
+          if (ready.length === 0) {
+            sel.innerHTML = '<option value="">— no models (add one in Models) —</option>';
           } else {
-            cps.forEach((m) => {
+            ready.forEach((m) => {
               const o = document.createElement('option');
-              o.value = m.name; o.textContent = m.name; sel.appendChild(o);
+              o.value = m.id;
+              const tag = m.loadMode === 'diffusion-model' ? ' · split' : '';
+              o.textContent = m.name + tag;
+              sel.appendChild(o);
             });
-            if (prev && cps.some((m) => m.name === prev)) sel.value = prev;
+            if (prev && ready.some((m) => m.id === prev)) sel.value = prev;
           }
         } catch (e) {
           sel.innerHTML = '<option value="">— failed to load models —</option>';
@@ -409,41 +422,84 @@
       });
 
       // ---- Models ----
+      function compRow(model, type, file) {
+        const role = file.role ? ' <span class="pill">' + file.role + '</span>' : '';
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;';
+        const left = document.createElement('div');
+        left.innerHTML = '<span class="pill">' + type + '</span> ' + file.name + role +
+          ' <span style="color:var(--muted)">· ' + fmtSize(file.size) + '</span>';
+        const del = document.createElement('button');
+        del.className = 'danger'; del.textContent = '✕';
+        del.title = 'Delete component';
+        del.onclick = () => deleteComponent(model, type, file.name);
+        row.append(left, del);
+        return row;
+      }
+
       async function loadModels() {
         try {
           const { models } = await api('/v1/models');
-          const tbody = $('modelRows');
-          tbody.innerHTML = '';
+          // populate datalist of model names
+          $('modelList').innerHTML = models.map((m) => '<option value="' + m.id + '">').join('');
+          const wrap = $('modelCards');
+          wrap.innerHTML = '';
           $('modelsEmpty').classList.toggle('hidden', models.length > 0);
           models.forEach((m) => {
-            const tr = document.createElement('tr');
-            tr.innerHTML =
-              '<td>' + m.name + '</td>' +
-              '<td><span class="pill">' + m.type + '</span></td>' +
-              '<td>' + fmtSize(m.size) + '</td>' +
-              '<td style="text-align:right"></td>';
-            const btn = document.createElement('button');
-            btn.className = 'danger'; btn.textContent = 'Delete';
-            btn.onclick = () => deleteModel(m.name);
-            tr.lastChild.appendChild(btn);
-            tbody.appendChild(tr);
+            const card = document.createElement('div');
+            card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--panel-2);';
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
+            const badge = m.ready
+              ? '<span class="pill" style="border-color:var(--accent-2);color:#7ee2a8">' + m.loadMode + '</span>'
+              : '<span class="pill" style="border-color:var(--danger);color:#f5a8a3">no checkpoint</span>';
+            head.innerHTML = '<strong>' + m.name + '</strong> ' + badge;
+            const delAll = document.createElement('button');
+            delAll.className = 'danger'; delAll.textContent = 'Delete model';
+            delAll.onclick = () => deleteModel(m.id);
+            head.appendChild(delAll);
+            card.appendChild(head);
+
+            const comps = [];
+            if (m.checkpoint) comps.push(compRow(m.id, 'checkpoint', m.checkpoint));
+            if (m.vae) comps.push(compRow(m.id, 'vae', m.vae));
+            (m.clip || []).forEach((c) => comps.push(compRow(m.id, 'clip', c)));
+            if (comps.length === 0) {
+              const e = document.createElement('div');
+              e.style.cssText = 'color:var(--muted);font-size:12px;';
+              e.textContent = 'Empty bundle — add a checkpoint.';
+              card.appendChild(e);
+            } else comps.forEach((c) => card.appendChild(c));
+            wrap.appendChild(card);
           });
         } catch (e) { toast(e.message, true); }
       }
 
-      async function deleteModel(name) {
-        if (!confirm('Delete "' + name + '"?')) return;
+      async function deleteModel(id) {
+        if (!confirm('Delete model "' + id + '" and all its files?')) return;
         try {
-          await api('/v1/models/' + encodeURIComponent(name), { method: 'DELETE' });
+          await api('/v1/models/' + encodeURIComponent(id), { method: 'DELETE' });
+          toast('Deleted ' + id);
+          loadModels(); loadCheckpoints();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      async function deleteComponent(model, type, name) {
+        if (!confirm('Delete ' + type + ' "' + name + '" from ' + model + '?')) return;
+        try {
+          await api('/v1/models/' + encodeURIComponent(model) + '/' + type + '/' + encodeURIComponent(name), { method: 'DELETE' });
           toast('Deleted ' + name);
-          loadModels();
-          loadCheckpoints();
+          loadModels(); loadCheckpoints();
         } catch (e) { toast(e.message, true); }
       }
 
       $('dlForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const payload = { url: $('dlUrl').value, type: $('dlType').value };
+        const payload = {
+          model: $('dlModel').value.trim(),
+          type: $('dlType').value,
+          url: $('dlUrl').value,
+        };
         const name = $('dlName').value.trim();
         if (name) payload.name = name;
         $('dlBtn').disabled = true; $('dlBtn').textContent = 'Downloading…';
@@ -453,14 +509,13 @@
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
           });
-          toast('Downloaded ' + info.name + ' (' + fmtSize(info.size) + ')');
-          $('dlForm').reset();
-          loadModels();
-          loadCheckpoints();
+          toast('Added to ' + info.id);
+          $('dlUrl').value = ''; $('dlName').value = '';
+          loadModels(); loadCheckpoints();
         } catch (err) {
           toast(err.message, true);
         } finally {
-          $('dlBtn').disabled = false; $('dlBtn').textContent = 'Download';
+          $('dlBtn').disabled = false; $('dlBtn').textContent = 'Download into bundle';
         }
       });
 

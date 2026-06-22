@@ -22,6 +22,7 @@ export const SAMPLERS = [
 export const generateSchema = z.object({
   // Phase 1
   prompt: z.string().min(1, 'prompt is required'),
+  /** Model bundle id (a directory under models/) or a single model filename. */
   model: z.string().min(1, 'model is required'),
 
   // Phase 2
@@ -32,12 +33,6 @@ export const generateSchema = z.object({
   height: z.number().int().min(64).optional(),
   seed: z.number().int().min(-1).optional(),
   sampler: z.enum(SAMPLERS).optional(),
-
-  // Optional weights (Phase 3); names within the models dir.
-  vae: z.string().optional(),
-  clip_l: z.string().optional(),
-  clip_g: z.string().optional(),
-  t5xxl: z.string().optional(),
 });
 
 export type GenerateParams = z.infer<typeof generateSchema>;

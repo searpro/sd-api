@@ -1,15 +1,49 @@
 import { describe, it, expect } from 'vitest';
 import { buildArgs } from '../src/sd/args.js';
 import { parseProgress } from '../src/sd/progress.js';
+import type { ResolvedBundle } from '../src/models/bundle.js';
+
+const fullModel: ResolvedBundle = {
+  id: 'm.gguf',
+  dir: '/models',
+  displayName: 'm.gguf',
+  loadMode: 'model',
+  checkpointPath: '/models/m.gguf',
+  weights: {},
+  defaults: {},
+};
+
+const splitModel: ResolvedBundle = {
+  id: 'z-image',
+  dir: '/models/z-image',
+  displayName: 'z-image',
+  loadMode: 'diffusion-model',
+  checkpointPath: '/models/z-image/checkpoint/z.gguf',
+  weights: { vae: '/models/z-image/vae/v.sft', llm: '/models/z-image/clip/qwen.gguf' },
+  defaults: {},
+};
 
 describe('buildArgs', () => {
-  it('maps core params to CLI flags', () => {
+  it('uses -m for a full model checkpoint', () => {
     const args = buildArgs({
       params: { prompt: 'a cat', model: 'm.gguf' },
-      modelPath: '/m/m.gguf',
+      bundle: fullModel,
       outputPath: '/out/x.png',
     });
-    expect(args).toEqual(['-m', '/m/m.gguf', '-o', '/out/x.png', '-p', 'a cat']);
+    expect(args).toEqual(['-m', '/models/m.gguf', '-o', '/out/x.png', '-p', 'a cat']);
+  });
+
+  it('uses --diffusion-model and wires vae + llm for a split model', () => {
+    const args = buildArgs({
+      params: { prompt: 'a cat', model: 'z-image' },
+      bundle: splitModel,
+      outputPath: '/out/x.png',
+    });
+    expect(args).toContain('--diffusion-model');
+    expect(args).not.toContain('-m');
+    expect(args[args.indexOf('--diffusion-model') + 1]).toBe('/models/z-image/checkpoint/z.gguf');
+    expect(args[args.indexOf('--vae') + 1]).toBe('/models/z-image/vae/v.sft');
+    expect(args[args.indexOf('--llm') + 1]).toBe('/models/z-image/clip/qwen.gguf');
   });
 
   it('maps all phase-2 params', () => {
@@ -25,7 +59,7 @@ describe('buildArgs', () => {
         seed: 1234,
         sampler: 'euler_a',
       },
-      modelPath: '/m.gguf',
+      bundle: fullModel,
       outputPath: '/x.png',
     });
     expect(args).toContain('--steps');
@@ -46,7 +80,7 @@ describe('buildArgs', () => {
   it('passes prompt as a discrete arg (no shell injection surface)', () => {
     const args = buildArgs({
       params: { prompt: 'a cat; rm -rf /', model: 'm.gguf' },
-      modelPath: '/m.gguf',
+      bundle: fullModel,
       outputPath: '/x.png',
     });
     const i = args.indexOf('-p');

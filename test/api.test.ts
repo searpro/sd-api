@@ -26,7 +26,7 @@ describe('POST /v1/generate (Phase 1+2)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/generate',
-      payload: { prompt: 'a cat', model: 'test.gguf', steps: 3 },
+      payload: { prompt: 'a cat', model: 'test', steps: 3 },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -49,7 +49,7 @@ describe('POST /v1/generate (Phase 1+2)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/generate',
-      payload: { model: 'test.gguf' },
+      payload: { model: 'test' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('VALIDATION_ERROR');
@@ -59,25 +59,54 @@ describe('POST /v1/generate (Phase 1+2)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/generate',
-      payload: { prompt: 'x', model: 'test.gguf', width: 9999 },
+      payload: { prompt: 'x', model: 'test', width: 9999 },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('VALIDATION_ERROR');
   });
 });
 
-describe('models (Phase 3)', () => {
-  it('lists the seeded checkpoint', async () => {
+describe('models (bundles)', () => {
+  it('lists the seeded bundle with auto-wired components', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/models' });
     expect(res.statusCode).toBe(200);
-    const names = res.json().models.map((m: { name: string }) => m.name);
-    expect(names).toContain('test.gguf');
+    const models = res.json().models;
+    const test = models.find((m: { id: string }) => m.id === 'test');
+    expect(test).toBeTruthy();
+    expect(test.loadMode).toBe('diffusion-model'); // has vae + clip
+    expect(test.checkpoint.name).toBe('diffusion.gguf');
+    expect(test.vae.name).toBe('vae.safetensors');
+    // The qwen file is auto-detected as the llm text encoder.
+    expect(test.clip.find((c: { role?: string }) => c.role === 'llm')).toBeTruthy();
+    expect(test.ready).toBe(true);
+
+    const full = models.find((m: { id: string }) => m.id === 'full.gguf');
+    expect(full.loadMode).toBe('model');
+  });
+
+  it('creates an empty bundle', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/v1/models',
+      payload: { model: 'newmodel' },
+    });
+    expect(create.statusCode).toBe(201);
+    expect(create.json().id).toBe('newmodel');
+    expect(create.json().ready).toBe(false);
   });
 
   it('blocks traversal on delete', async () => {
     const res = await app.inject({ method: 'DELETE', url: '/v1/models/..%2F..%2Fetc' });
     expect([400, 404]).toContain(res.statusCode);
     expect(res.json().error.code).toMatch(/INVALID_PATH|NOT_FOUND/);
+  });
+
+  it('deletes a bundle', async () => {
+    await app.inject({ method: 'POST', url: '/v1/models', payload: { model: 'tmpdel' } });
+    const del = await app.inject({ method: 'DELETE', url: '/v1/models/tmpdel' });
+    expect(del.statusCode).toBe(200);
+    const got = await app.inject({ method: 'GET', url: '/v1/models/tmpdel' });
+    expect(got.statusCode).toBe(404);
   });
 });
 
@@ -86,7 +115,7 @@ describe('jobs (Phase 4)', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/v1/jobs',
-      payload: { prompt: 'async cat', model: 'test.gguf', steps: 3 },
+      payload: { prompt: 'async cat', model: 'test', steps: 3 },
     });
     expect(create.statusCode).toBe(202);
     const { id } = create.json();
@@ -116,7 +145,7 @@ describe('outputs (Phase 6)', () => {
     const gen = await app.inject({
       method: 'POST',
       url: '/v1/generate',
-      payload: { prompt: 'serve me', model: 'test.gguf', steps: 2 },
+      payload: { prompt: 'serve me', model: 'test', steps: 2 },
     });
     const name = gen.json().image_url.split('/').pop();
     const res = await app.inject({ method: 'GET', url: `/v1/outputs/${name}?format=base64` });

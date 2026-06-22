@@ -65,7 +65,8 @@ cp .env.example .env        # then edit SD_BINARY_PATH etc.
 npm run build && npm start  # or: npm run dev
 ```
 
-Drop a `.gguf` checkpoint into `<models_dir>/checkpoints/`, then:
+Drop a model into a bundle (e.g. `<models_dir>/my-model/checkpoint/model.gguf`,
+or a single `<models_dir>/my-model.gguf` for a full checkpoint), then:
 
 ```bash
 curl -X POST localhost:3000/v1/generate \
@@ -85,7 +86,7 @@ A dependency-free, single-file frontend is served at `/` (no build step —
   live SSE progress (bar + step count + log tail) until the image renders.
   Includes cancel.
 - **Models** — list installed models with size/type, delete them, and
-  download new ones by URL into `checkpoints/`, `vae/`, or `clip/`.
+  download new components (checkpoint/vae/clip) by URL into a model bundle.
 
 It uses only the public endpoints (`/v1/jobs`, `/v1/jobs/:id/stream`,
 `/v1/models`, `/v1/outputs/...`), so it works against any deployment.
@@ -101,7 +102,7 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_INSTALL_DIR` | `install_dir` | `./data/bin` | Where downloaded binaries are unpacked |
 | `SD_RELEASE_TAG` | `release_tag` | `latest` | Release to install (`latest` or a specific tag) |
 | `SD_ACCEL` | `accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
-| `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root of `checkpoints/`, `vae/`, `clip/` |
+| `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root holding per-model bundle directories |
 | `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images |
 | `SD_HOST` / `SD_PORT` | `host` / `port` | `0.0.0.0` / `3000` | Listen address |
 | `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `2` | Queue concurrency |
@@ -110,14 +111,60 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_LOG_LEVEL` | `log_level` | `info` | pino level |
 | `GITHUB_TOKEN` | — | — | Optional; raises GitHub API rate limit for auto-install |
 
-## Models directory layout (Phase 3)
+## Models directory layout — per-model bundles
+
+Each model is a **bundle**: its own directory under `<models_dir>/` carrying its
+components. The `"model"` request field is the bundle id (the directory name).
 
 ```
 <models_dir>/
-  checkpoints/   # .gguf (and .safetensors/.ckpt) checkpoints — referenced by "model"
-  vae/           # optional VAE weights — referenced by "vae"
-  clip/          # optional CLIP / T5 weights — clip_l, clip_g, t5xxl
+  z-image-turbo/
+    model.json            # optional manifest (overrides auto-detection)
+    checkpoint/           # the diffusion model / full checkpoint
+      z_image_turbo-Q2_K.gguf
+    vae/                  # optional standalone VAE
+      z_image_vae.safetensors
+    clip/                 # optional text encoders: clip_l, clip_g, t5xxl, llm, clip_vision
+      qwen3-4b.gguf
+  sdxl.gguf               # a single file at the root = a full checkpoint
 ```
+
+### How components are wired to sd-cli
+
+At generation time the bundle is resolved and the right flags are emitted
+automatically:
+
+- **Checkpoint** → `-m` for a **full** checkpoint, or `--diffusion-model` for a
+  **standalone diffusion model**. Auto-detected: if the bundle has a `vae/` or
+  `clip/` component it is treated as a split model (`--diffusion-model`),
+  otherwise a full model (`-m`).
+- **VAE** (`vae/`) → `--vae`.
+- **Text encoders** (`clip/`) → `--clip_l`, `--clip_g`, `--t5xxl`, `--llm`, or
+  `--clip_vision`, with each file's role inferred from its filename
+  (`clip_l…`, `t5xxl…`, `qwen…`/`mistral…` → `llm`, …).
+
+This is why a split model like **Z-Image Turbo** now works: dropping its
+diffusion gguf, VAE and Qwen text encoder into the bundle produces
+`sd-cli --diffusion-model … --vae … --llm … -p …` instead of just `-m …`.
+
+### `model.json` manifest (optional)
+
+Drop a manifest in the bundle to override auto-detection:
+
+```jsonc
+{
+  "name": "Z-Image Turbo",
+  "load": "diffusion-model",        // or "model", or "auto" (default)
+  "components": {                    // pin specific files / roles
+    "checkpoint": "z_image_turbo-Q2_K.gguf",
+    "vae": "z_image_vae.safetensors",
+    "llm": "qwen3-4b.gguf"
+  },
+  "defaults": { "steps": 8, "cfg_scale": 1, "sampler": "euler" }
+}
+```
+
+`defaults` are applied to any generation request that omits those fields.
 
 ## API overview
 
@@ -126,17 +173,19 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 ```jsonc
 {
   "prompt": "a futuristic city",     // required
-  "model": "sdxl-base.gguf",          // required, name under checkpoints/
+  "model": "z-image-turbo",           // required: bundle id (dir name) or a model file
   "negative_prompt": "blurry",
-  "steps": 20,
+  "steps": 20,                        // omitted fields fall back to the bundle's manifest defaults
   "cfg_scale": 7,
   "width": 512,
   "height": 512,
   "seed": 1234,
-  "sampler": "euler_a",
-  "vae": "sdxl-vae.safetensors"       // optional weights by name
+  "sampler": "euler_a"
 }
 ```
+
+VAE and text encoders are **not** passed per request — they are resolved from
+the model bundle automatically (see the layout section above).
 
 Response:
 
@@ -158,14 +207,26 @@ curl localhost:3000/v1/jobs/$ID            # { "status": "running", "progress": 
 curl -N localhost:3000/v1/jobs/$ID/stream  # SSE: progress events then complete/error
 ```
 
-### Models (Phase 3)
+### Models (bundles)
 
 ```bash
-curl localhost:3000/v1/models
-curl -X POST localhost:3000/v1/models/download \
-  -H 'content-type: application/json' \
-  -d '{"url":"https://.../model.gguf","type":"checkpoint"}'
-curl -X DELETE localhost:3000/v1/models/model.gguf
+curl localhost:3000/v1/models                 # list bundles + their components
+curl localhost:3000/v1/models/z-image-turbo   # one bundle
+
+# Create an empty bundle (checkpoint/ vae/ clip/)
+curl -X POST localhost:3000/v1/models -H 'content-type: application/json' \
+  -d '{"model":"z-image-turbo"}'
+
+# Download a component into a bundle (auto-creates it if new)
+curl -X POST localhost:3000/v1/models/download -H 'content-type: application/json' \
+  -d '{"model":"z-image-turbo","type":"checkpoint","url":"https://.../z_image_turbo-Q2_K.gguf"}'
+curl -X POST localhost:3000/v1/models/download -H 'content-type: application/json' \
+  -d '{"model":"z-image-turbo","type":"vae","url":"https://.../z_image_vae.safetensors"}'
+curl -X POST localhost:3000/v1/models/download -H 'content-type: application/json' \
+  -d '{"model":"z-image-turbo","type":"clip","url":"https://.../qwen3-4b.gguf"}'
+
+curl -X DELETE localhost:3000/v1/models/z-image-turbo                       # whole bundle
+curl -X DELETE localhost:3000/v1/models/z-image-turbo/vae/z_image_vae.safetensors  # one file
 ```
 
 ## CLI flag mapping (Spec section 3)
@@ -177,7 +238,9 @@ API parameters map directly to `stable-diffusion.cpp` flags in
 | --- | -------- |
 | `prompt` | `-p` |
 | `negative_prompt` | `-n` |
-| `model` | `-m` |
+| `model` (checkpoint) | `-m` (full) or `--diffusion-model` (split) |
+| bundle `vae/` | `--vae` |
+| bundle `clip/` | `--clip_l` / `--clip_g` / `--t5xxl` / `--llm` / `--clip_vision` |
 | `steps` | `--steps` |
 | `cfg_scale` | `--cfg-scale` |
 | `width` / `height` | `-W` / `-H` |
@@ -216,7 +279,7 @@ src/
   schemas/          # zod request/response schemas
   sd/               # CLI wrapper, arg mapping, progress parsing,
                     #   release selection + auto-installer
-  models/           # model manager (list/download/delete)
+  models/           # bundle resolver + model manager (list/download/delete)
   jobs/             # in-memory job queue + manager
   routes/           # generate, jobs, models, outputs, health
   util/             # path safety, filename, validation

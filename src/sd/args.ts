@@ -1,4 +1,5 @@
 import type { GenerateParams } from '../schemas/generate.js';
+import type { ResolvedBundle } from '../models/bundle.js';
 
 /**
  * Mapping from API parameters to stable-diffusion.cpp CLI flags (Spec section 3).
@@ -17,19 +18,23 @@ export const FLAG_MAP = {
   sampler: '--sampling-method',
 } as const;
 
+/** sd-cli flag for each resolved weight / text-encoder component. */
+export const WEIGHT_FLAG = {
+  vae: '--vae',
+  clip_l: '--clip_l',
+  clip_g: '--clip_g',
+  clip_vision: '--clip_vision',
+  t5xxl: '--t5xxl',
+  llm: '--llm',
+} as const;
+
 export interface BuildArgsInput {
+  /** Generation parameters, with bundle defaults already merged in. */
   params: GenerateParams;
-  /** Absolute path to the resolved .gguf checkpoint. */
-  modelPath: string;
+  /** The resolved model bundle (checkpoint + components). */
+  bundle: ResolvedBundle;
   /** Absolute output image path. */
   outputPath: string;
-  /** Absolute paths for optional weights, already resolved + validated. */
-  weights?: {
-    vae?: string;
-    clip_l?: string;
-    clip_g?: string;
-    t5xxl?: string;
-  };
 }
 
 /**
@@ -38,11 +43,27 @@ export interface BuildArgsInput {
  * interpolation and prompts cannot inject extra flags.
  */
 export function buildArgs(input: BuildArgsInput): string[] {
-  const { params, modelPath, outputPath, weights } = input;
+  const { params, bundle, outputPath } = input;
   const args: string[] = [];
 
-  // Core: model + output.
-  args.push('-m', modelPath);
+  // Checkpoint: a full model uses -m; a standalone diffusion model uses
+  // --diffusion-model and is accompanied by its VAE / text encoders.
+  if (bundle.loadMode === 'diffusion-model') {
+    args.push('--diffusion-model', bundle.checkpointPath);
+  } else {
+    args.push('-m', bundle.checkpointPath);
+  }
+
+  // Auto-wired components from the bundle.
+  for (const [role, flag] of Object.entries(WEIGHT_FLAG) as [
+    keyof typeof WEIGHT_FLAG,
+    string,
+  ][]) {
+    const path = bundle.weights[role];
+    if (path) args.push(flag, path);
+  }
+
+  // Output.
   args.push('-o', outputPath);
 
   // Prompt is always present.
@@ -56,12 +77,6 @@ export function buildArgs(input: BuildArgsInput): string[] {
   if (params.height !== undefined) args.push(FLAG_MAP.height, String(params.height));
   if (params.seed !== undefined) args.push(FLAG_MAP.seed, String(params.seed));
   if (params.sampler) args.push(FLAG_MAP.sampler, params.sampler);
-
-  // Optional weights (Phase 3).
-  if (weights?.vae) args.push('--vae', weights.vae);
-  if (weights?.clip_l) args.push('--clip_l', weights.clip_l);
-  if (weights?.clip_g) args.push('--clip_g', weights.clip_g);
-  if (weights?.t5xxl) args.push('--t5xxl', weights.t5xxl);
 
   return args;
 }

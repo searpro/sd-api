@@ -19,12 +19,17 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
   const root = await mkdtemp(join(tmpdir(), 'sd-api-test-'));
   const modelsDir = join(root, 'models');
   const outputsDir = join(root, 'outputs');
-  await mkdir(join(modelsDir, 'checkpoints'), { recursive: true });
-  await mkdir(join(modelsDir, 'vae'), { recursive: true });
-  await mkdir(join(modelsDir, 'clip'), { recursive: true });
   await mkdir(outputsDir, { recursive: true });
-  // A dummy checkpoint file the wrapper can resolve.
-  await writeFile(join(modelsDir, 'checkpoints', 'test.gguf'), 'dummy');
+
+  // Seed a split bundle "test" with checkpoint + vae + clip(llm) components.
+  await mkdir(join(modelsDir, 'test', 'checkpoint'), { recursive: true });
+  await mkdir(join(modelsDir, 'test', 'vae'), { recursive: true });
+  await mkdir(join(modelsDir, 'test', 'clip'), { recursive: true });
+  await writeFile(join(modelsDir, 'test', 'checkpoint', 'diffusion.gguf'), 'dummy');
+  await writeFile(join(modelsDir, 'test', 'vae', 'vae.safetensors'), 'dummy');
+  await writeFile(join(modelsDir, 'test', 'clip', 'qwen3-4b.gguf'), 'dummy');
+  // Also a single-file full model.
+  await writeFile(join(modelsDir, 'full.gguf'), 'dummy');
 
   const sdBinaryPath = await makeFakeBinary(root);
 
