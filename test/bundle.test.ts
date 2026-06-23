@@ -78,4 +78,21 @@ describe('bundle resolution', () => {
   it('throws MODEL_NOT_FOUND for a missing bundle', async () => {
     await expect(resolveBundle(modelsDir, 'ghost')).rejects.toThrow();
   });
+
+  it('lists loras and resolves a lora-model-dir', async () => {
+    await mkdir(join(modelsDir, 'z-image', 'lora'), { recursive: true });
+    await writeFile(join(modelsDir, 'z-image', 'lora', 'lineart.safetensors'), 'x');
+
+    const info = await inspectBundle(modelsDir, 'z-image');
+    const lora = info.loras.find((l) => l.name === 'lineart.safetensors');
+    expect(lora?.ref).toBe('lineart'); // reference name = filename without extension
+
+    const b = await resolveBundle(modelsDir, 'z-image');
+    expect(b.loraDir).toContain(join('z-image', 'lora'));
+  });
+
+  it('has no lora-model-dir when the bundle has no loras', async () => {
+    const b = await resolveBundle(modelsDir, 'sdxl');
+    expect(b.loraDir).toBeUndefined();
+  });
 });

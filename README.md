@@ -21,6 +21,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | Catalog | Guided model downloads (format + quantization) | `GET /v1/catalog` |
 | Editing | img2img + reference-image editing (single/multi) | `POST /v1/inputs` |
 | Downloads | Background downloads w/ progress + resume | `GET /v1/downloads` |
+| LoRA | Per-model LoRAs, prompt-activated `<lora:name:1>` | `type: lora` |
 
 ## Prerequisites
 
@@ -132,6 +133,8 @@ components. The `"model"` request field is the bundle id (the directory name).
       z_image_vae.safetensors
     clip/                 # optional text encoders: clip_l, clip_g, t5xxl, llm, clip_vision
       qwen3-4b.gguf
+    lora/                 # optional LoRA weights, applied via the prompt
+      lineart.safetensors
   sdxl.gguf               # a single file at the root = a full checkpoint
 ```
 
@@ -235,6 +238,23 @@ and the web UI shows per-file status with cancel / resume / discard controls.
 
 > The model catalog's "Install" enqueues all components at once and shows live
 > per-file progress; a failed file can be resumed from the Models tab.
+
+## LoRA
+
+LoRAs are **per-model**: each lives in the model bundle's `lora/` sub-directory
+and is activated from the prompt, matching stable-diffusion.cpp.
+
+- Add a LoRA to a model by downloading it (same background download flow):
+  `POST /v1/models/download` with `{ "model": "flux1-dev", "type": "lora", "url": "https://.../lineart.safetensors" }`.
+- `GET /v1/models/<id>` lists the bundle's `loras[]` as `{ name, ref, size }`,
+  where `ref` is the filename without extension.
+- At generation the wrapper passes `--lora-model-dir <bundle>/lora` whenever the
+  model has any LoRA files. Activate one by putting `<lora:ref:multiplier>` in
+  the prompt, e.g. `a lovely cat <lora:lineart:0.8>`.
+
+In the web UI, the Generate tab shows the selected model's LoRAs as chips —
+clicking one inserts `<lora:ref:1>` into the prompt at the cursor. The Models
+tab lists/downloads/deletes LoRAs like any other component (`type: lora`).
 
 ## Image editing / img2img
 

@@ -96,6 +96,22 @@ describe('buildArgs', () => {
     expect(args[args.indexOf('--img-cfg-scale') + 1]).toBe('2');
   });
 
+  it('passes --lora-model-dir when the bundle has a lora dir', () => {
+    const args = buildArgs({
+      params: { prompt: 'a cat <lora:lineart:0.8>', model: 'z' },
+      bundle: { ...splitModel, loraDir: '/models/z-image/lora' },
+      outputPath: '/x.png',
+    });
+    expect(args[args.indexOf('--lora-model-dir') + 1]).toBe('/models/z-image/lora');
+    // The lora tag stays in the prompt verbatim.
+    expect(args[args.indexOf('-p') + 1]).toContain('<lora:lineart:0.8>');
+  });
+
+  it('omits --lora-model-dir when there is no lora dir', () => {
+    const args = buildArgs({ params: { prompt: 'p', model: 'm' }, bundle: fullModel, outputPath: '/x.png' });
+    expect(args).not.toContain('--lora-model-dir');
+  });
+
   it('appends manifest extra args', () => {
     const args = buildArgs({
       params: { prompt: 'p', model: 'q' },

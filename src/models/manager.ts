@@ -82,6 +82,7 @@ export class ModelManager {
           modified: e.mtime,
           ready: true,
           partials: [],
+          loras: [],
         });
       }
     }
@@ -106,6 +107,7 @@ export class ModelManager {
         modified: s.mtime.toISOString(),
         ready: true,
         partials: [],
+        loras: [],
       };
     } catch {
       return null;

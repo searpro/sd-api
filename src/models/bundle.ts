@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve, join, extname } from 'node:path';
 import { assertSafeName, safeResolve } from '../util/paths.js';
 import { errors } from '../errors.js';
 
@@ -27,9 +27,10 @@ export const SUBDIRS = {
   checkpoint: 'checkpoint',
   vae: 'vae',
   clip: 'clip',
+  lora: 'lora',
 } as const;
 
-export type ComponentType = keyof typeof SUBDIRS; // checkpoint | vae | clip
+export type ComponentType = keyof typeof SUBDIRS; // checkpoint | vae | clip | lora
 
 /** Roles within the clip/ directory that map to specific sd-cli flags. */
 export type ClipRole = 'clip_l' | 'clip_g' | 'clip_vision' | 't5xxl' | 'llm' | 'llm_vision';
@@ -69,12 +70,23 @@ export interface ResolvedBundle {
   weights: Partial<Record<ClipRole | 'vae', string>>;
   defaults: NonNullable<ModelManifest['defaults']>;
   extraArgs: string[];
+  /** Directory of LoRA weights for this model (--lora-model-dir), if any. */
+  loraDir?: string;
 }
 
 export interface ComponentFile {
   name: string;
   size: number;
   role?: ClipRole; // only for clip components
+}
+
+/** A LoRA weight available to a model. */
+export interface LoraFile {
+  /** Filename on disk (e.g. "lineart.safetensors"). */
+  name: string;
+  /** Reference used in the prompt: <lora:ref:1> (filename without extension). */
+  ref: string;
+  size: number;
 }
 
 /** An in-progress / interrupted download left on disk as a .part file. */
@@ -101,6 +113,8 @@ export interface BundleInfo {
   ready: boolean;
   /** Interrupted/partial downloads present on disk (resumable). */
   partials: PartialFile[];
+  /** LoRA weights available for this model. */
+  loras: LoraFile[];
 }
 
 async function readManifest(dir: string): Promise<ModelManifest | null> {
@@ -193,11 +207,13 @@ export async function inspectBundle(modelsDir: string, id: string): Promise<Bund
   const ckptFiles = await listFiles(join(dir, SUBDIRS.checkpoint));
   const vaeFiles = await listFiles(join(dir, SUBDIRS.vae));
   const clipFiles = await listFiles(join(dir, SUBDIRS.clip));
+  const loraFiles = await listFiles(join(dir, SUBDIRS.lora));
 
   const partials = [
     ...(await listPartials(join(dir, SUBDIRS.checkpoint), 'checkpoint')),
     ...(await listPartials(join(dir, SUBDIRS.vae), 'vae')),
     ...(await listPartials(join(dir, SUBDIRS.clip), 'clip')),
+    ...(await listPartials(join(dir, SUBDIRS.lora), 'lora')),
   ];
 
   const checkpoint = pickFile(ckptFiles, manifest?.components?.checkpoint);
@@ -206,8 +222,13 @@ export async function inspectBundle(modelsDir: string, id: string): Promise<Bund
     ...f,
     role: manifestRoleFor(manifest, f.name) ?? detectClipRole(f.name) ?? undefined,
   }));
+  const loras: LoraFile[] = loraFiles.map((f) => ({
+    name: f.name,
+    ref: f.name.slice(0, f.name.length - extname(f.name).length),
+    size: f.size,
+  }));
 
-  const allFiles = [...ckptFiles, ...vaeFiles, ...clipFiles];
+  const allFiles = [...ckptFiles, ...vaeFiles, ...clipFiles, ...loraFiles];
   const size = allFiles.reduce((a, f) => a + f.size, 0);
   let modified = new Date(0).toISOString();
   try {
@@ -227,6 +248,7 @@ export async function inspectBundle(modelsDir: string, id: string): Promise<Bund
     modified,
     ready: checkpoint !== null,
     partials,
+    loras,
   };
 }
 
@@ -302,6 +324,7 @@ export async function resolveBundle(modelsDir: string, id: string): Promise<Reso
   const ckptFiles = await listFiles(join(dir, SUBDIRS.checkpoint));
   const vaeFiles = await listFiles(join(dir, SUBDIRS.vae));
   const clipFiles = await listFiles(join(dir, SUBDIRS.clip));
+  const loraFiles = await listFiles(join(dir, SUBDIRS.lora));
 
   const checkpoint = pickFile(ckptFiles, manifest?.components?.checkpoint);
   if (!checkpoint) {
@@ -328,5 +351,7 @@ export async function resolveBundle(modelsDir: string, id: string): Promise<Reso
     weights,
     defaults: manifest?.defaults ?? {},
     extraArgs: manifest?.extra_args ?? [],
+    // Pass --lora-model-dir only when the bundle actually has LoRA files.
+    loraDir: loraFiles.length > 0 ? resolve(dir, SUBDIRS.lora) : undefined,
   };
 }

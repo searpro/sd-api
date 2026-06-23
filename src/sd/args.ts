@@ -81,6 +81,9 @@ export function buildArgs(input: BuildArgsInput): string[] {
   if (params.img_cfg_scale !== undefined) args.push('--img-cfg-scale', String(params.img_cfg_scale));
   if (params.increase_ref_index) args.push('--increase-ref-index');
 
+  // LoRA directory — LoRAs are activated via <lora:name:mult> in the prompt.
+  if (bundle.loraDir) args.push('--lora-model-dir', bundle.loraDir);
+
   // Output.
   args.push('-o', outputPath);
 

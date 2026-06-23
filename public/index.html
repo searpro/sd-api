@@ -146,6 +146,11 @@
             <label for="model">Model</label>
             <select id="model" required></select>
 
+            <div id="loraRow" class="hidden" style="margin-top:8px;">
+              <label style="margin-top:0;">LoRAs <span style="text-transform:none;color:var(--muted);">— click to insert <code>&lt;lora:name:1&gt;</code> into the prompt</span></label>
+              <div id="loraChips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+            </div>
+
             <label for="prompt">Prompt</label>
             <textarea id="prompt" placeholder="a futuristic city at dusk, highly detailed" required></textarea>
 
@@ -245,6 +250,7 @@
               <option value="checkpoint">checkpoint (diffusion model)</option>
               <option value="vae">vae</option>
               <option value="clip">clip (clip_l / t5xxl / llm …)</option>
+              <option value="lora">lora</option>
             </select>
             <label for="dlUrl">URL</label>
             <input id="dlUrl" type="url" placeholder="https://…/file.gguf" required />
@@ -339,6 +345,7 @@
         try {
           const { models } = await api('/v1/models');
           const ready = models.filter((m) => m.ready);
+          modelsCache = ready;
           sel.innerHTML = '';
           if (ready.length === 0) {
             sel.innerHTML = '<option value="">— no models (add one in Models) —</option>';
@@ -352,10 +359,38 @@
             });
             if (prev && ready.some((m) => m.id === prev)) sel.value = prev;
           }
+          renderLoras();
         } catch (e) {
           sel.innerHTML = '<option value="">— failed to load models —</option>';
         }
       }
+
+      let modelsCache = [];
+      function insertAtPrompt(text) {
+        const ta = $('prompt');
+        const start = ta.selectionStart ?? ta.value.length;
+        const end = ta.selectionEnd ?? ta.value.length;
+        ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+        const pos = start + text.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+      }
+      function renderLoras() {
+        const model = modelsCache.find((m) => m.id === $('model').value);
+        const loras = (model && model.loras) || [];
+        const row = $('loraRow'), chips = $('loraChips');
+        chips.innerHTML = '';
+        row.classList.toggle('hidden', loras.length === 0);
+        loras.forEach((l) => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'ghost';
+          b.textContent = l.ref;
+          b.title = 'Insert <lora:' + l.ref + ':1>';
+          b.onclick = () => insertAtPrompt('<lora:' + l.ref + ':1>');
+          chips.appendChild(b);
+        });
+      }
+      document.getElementById('model').addEventListener('change', renderLoras);
 
       // ---- Generation ----
       let currentJob = null;
@@ -635,6 +670,7 @@
             if (m.checkpoint) card.appendChild(compRow(m.id, 'checkpoint', m.checkpoint));
             if (m.vae) card.appendChild(compRow(m.id, 'vae', m.vae));
             (m.clip || []).forEach((c) => card.appendChild(compRow(m.id, 'clip', c)));
+            (m.loras || []).forEach((l) => card.appendChild(compRow(m.id, 'lora', l)));
 
             // Active / failed downloads for this model.
             const active = (byModel[m.id] || []).filter((t) => t.status !== 'completed');
@@ -644,7 +680,7 @@
             const activeNames = new Set(active.map((t) => t.type + '/' + t.name));
             (m.partials || []).forEach((p) => { if (!activeNames.has(p.type + '/' + p.name)) card.appendChild(partialRow(m.id, p)); });
 
-            if (!m.checkpoint && !m.vae && (!m.clip || !m.clip.length) && !active.length && (!m.partials || !m.partials.length)) {
+            if (!m.checkpoint && !m.vae && (!m.clip || !m.clip.length) && (!m.loras || !m.loras.length) && !active.length && (!m.partials || !m.partials.length)) {
               const e = document.createElement('div'); e.style.cssText = 'color:var(--muted);font-size:12px;'; e.textContent = 'Empty bundle — add a checkpoint.';
               card.appendChild(e);
             }

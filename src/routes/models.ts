@@ -11,8 +11,14 @@ const componentFileSchema = z.object({
   role: z.string().optional(),
 });
 
+const loraFileSchema = z.object({
+  name: z.string(),
+  ref: z.string(),
+  size: z.number(),
+});
+
 const partialSchema = z.object({
-  type: z.enum(['checkpoint', 'vae', 'clip']),
+  type: z.enum(['checkpoint', 'vae', 'clip', 'lora']),
   name: z.string(),
   received: z.number(),
   total: z.number().nullable(),
@@ -29,9 +35,10 @@ const bundleSchema = z.object({
   modified: z.string(),
   ready: z.boolean(),
   partials: z.array(partialSchema),
+  loras: z.array(loraFileSchema),
 });
 
-const componentType = z.enum(['checkpoint', 'vae', 'clip']);
+const componentType = z.enum(['checkpoint', 'vae', 'clip', 'lora']);
 
 const createSchema = z.object({ model: z.string().min(1) });
 
@@ -170,7 +177,7 @@ export async function modelRoutes(fastify: FastifyInstance): Promise<void> {
   );
 
   // Delete a single component within a bundle.
-  app.delete<{ Params: { model: string; type: 'checkpoint' | 'vae' | 'clip'; name: string } }>(
+  app.delete<{ Params: { model: string; type: 'checkpoint' | 'vae' | 'clip' | 'lora'; name: string } }>(
     '/v1/models/:model/:type/:name',
     {
       schema: {

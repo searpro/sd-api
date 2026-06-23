@@ -6,7 +6,7 @@ import { errorResponseSchema } from '../schemas/generate.js';
 export const downloadTaskSchema = z.object({
   id: z.string(),
   model: z.string(),
-  type: z.enum(['checkpoint', 'vae', 'clip']),
+  type: z.enum(['checkpoint', 'vae', 'clip', 'lora']),
   name: z.string(),
   url: z.string(),
   status: z.enum(['queued', 'downloading', 'completed', 'failed', 'cancelled']),
@@ -180,7 +180,7 @@ export async function downloadRoutes(fastify: FastifyInstance): Promise<void> {
         summary: 'Resume an on-disk partial download by model/type/name',
         body: z.object({
           model: z.string(),
-          type: z.enum(['checkpoint', 'vae', 'clip']),
+          type: z.enum(['checkpoint', 'vae', 'clip', 'lora']),
           name: z.string(),
         }),
         response: { 202: downloadTaskSchema, 400: errorResponseSchema },
