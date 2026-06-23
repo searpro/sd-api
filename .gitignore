@@ -12,3 +12,7 @@ dist/
 # Local env / config overrides
 .env
 config/local.json
+
+# Claude Code: share project config (.claude/), ignore personal/local overrides
+.claude/settings.local.json
+.claude/*.local.json

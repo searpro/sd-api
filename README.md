@@ -408,7 +408,12 @@ npm run typecheck
 npm test           # vitest — runs against a stub `sd` binary, no model needed
 ```
 
+Contributing / AI agents: start with **CLAUDE.md** (conventions + invariants)
+and **docs/ARCHITECTURE.md** (internals). The repo ships Claude Code config under
+`.claude/` — skills (`add-catalog-model`, `sd-cli-args`, `local-verify`) and
+commands (`/check`, `/new-route`).
+
 ## Future extensions (not yet implemented)
 
-LoRA, ControlNet, img2img, inpainting, persistent job store, GPU scheduling,
-distributed workers.
+ControlNet, persistent job/download store, GPU scheduling, distributed workers,
+video models (Wan, LTX-2.3), externalized catalog (designed, deferred).
