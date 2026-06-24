@@ -1,9 +1,19 @@
 import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
+import { hfTokenSource } from './util/hf-auth.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const app = await buildServer(config);
+
+  // Note HuggingFace auth status (needed for gated/private models).
+  const hfSource = hfTokenSource();
+  app.log.info(
+    { hfAuth: hfSource },
+    hfSource === 'none'
+      ? 'HuggingFace: no token configured — gated/private models will fail to download (set HF_TOKEN)'
+      : 'HuggingFace: token configured',
+  );
 
   // Ensure a usable sd binary exists, auto-installing a prebuilt release if
   // configured. Non-fatal: model management and docs still work without it.

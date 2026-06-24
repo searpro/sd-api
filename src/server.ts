@@ -19,6 +19,7 @@ import { CatalogManager } from './catalog/manager.js';
 import { DownloadManager } from './downloads/manager.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
+import { authRoutes } from './routes/auth.js';
 import { generateRoutes } from './routes/generate.js';
 import { modelRoutes } from './routes/models.js';
 import { catalogRoutes } from './routes/catalog.js';
@@ -68,6 +69,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         { name: 'downloads', description: 'Background model downloads' },
         { name: 'inputs', description: 'Input images for img2img / editing' },
         { name: 'outputs', description: 'Generated images' },
+        { name: 'auth', description: 'HuggingFace authentication' },
         { name: 'system', description: 'Health & meta' },
       ],
     },
@@ -108,6 +110,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
 
   // Routes.
   await app.register(healthRoutes);
+  await app.register(authRoutes);
   await app.register(generateRoutes);
   await app.register(modelRoutes);
   await app.register(catalogRoutes);

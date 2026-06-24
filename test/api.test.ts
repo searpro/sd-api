@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
 import { makeTestConfig } from './helpers.js';
+import { setHfToken } from '../src/util/hf-auth.js';
 
 let app: FastifyInstance;
 
@@ -11,6 +12,39 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app.close();
+});
+
+describe('huggingface auth', () => {
+  afterAll(() => setHfToken(null));
+
+  it('reports not configured with no token', async () => {
+    const prev = { a: process.env.HF_TOKEN, b: process.env.HUGGING_FACE_HUB_TOKEN };
+    delete process.env.HF_TOKEN;
+    delete process.env.HUGGING_FACE_HUB_TOKEN;
+    setHfToken(null);
+    const res = await app.inject({ method: 'GET', url: '/v1/auth/hf' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ configured: false, source: 'none' });
+    if (prev.a !== undefined) process.env.HF_TOKEN = prev.a;
+    if (prev.b !== undefined) process.env.HUGGING_FACE_HUB_TOKEN = prev.b;
+  });
+
+  it('reports configured (masked) when a token is set, without leaking it', async () => {
+    setHfToken('hf_secrettoken1234');
+    const res = await app.inject({ method: 'GET', url: '/v1/auth/hf' });
+    const body = res.json();
+    expect(body.configured).toBe(true);
+    expect(body.masked).toContain('…');
+    expect(JSON.stringify(body)).not.toContain('secrettoken');
+    setHfToken(null);
+  });
+
+  it('verify returns ok:false when no token configured', async () => {
+    setHfToken(null);
+    const res = await app.inject({ method: 'POST', url: '/v1/auth/hf/verify' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: false, configured: false });
+  });
 });
 
 describe('health', () => {

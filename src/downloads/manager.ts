@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import { ModelManager, type ComponentType } from '../models/manager.js';
 import { errors, AppError } from '../errors.js';
+import { hfAuthHeaders, isHuggingFaceUrl, gatedHint } from '../util/hf-auth.js';
 
 export type DownloadStatus = 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled';
 
@@ -226,9 +227,7 @@ export class DownloadManager {
       offset = 0;
     }
 
-    const headers: Record<string, string> = { 'User-Agent': 'sd-api' };
-    const token = process.env.HF_TOKEN ?? process.env.HUGGING_FACE_HUB_TOKEN;
-    if (token && /huggingface\.co/.test(task.url)) headers.Authorization = `Bearer ${token}`;
+    const headers: Record<string, string> = { 'User-Agent': 'sd-api', ...hfAuthHeaders(task.url) };
     if (offset > 0) headers.Range = `bytes=${offset}-`;
 
     const res = await fetch(task.url, { headers, signal, redirect: 'follow' });
@@ -256,6 +255,8 @@ export class DownloadManager {
       task.received = 0;
       const cl = res.headers.get('content-length');
       total = cl ? Number(cl) : null;
+    } else if ((res.status === 401 || res.status === 403) && isHuggingFaceUrl(task.url)) {
+      throw errors.downloadFailed(gatedHint(res.status));
     } else {
       throw errors.downloadFailed(`HTTP ${res.status} ${res.statusText}`);
     }

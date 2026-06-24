@@ -222,6 +222,10 @@
             Curated from the stable-diffusion.cpp docs. Pick a model, then choose format and
             quantization for each component.
           </p>
+          <div id="hfAuth" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px;background:var(--panel-2);">
+            <span><span class="dot" id="hfDot"></span> HuggingFace: <span id="hfStatus">checking…</span></span>
+            <button class="ghost" id="hfVerify" type="button" style="margin-left:auto;">Verify</button>
+          </div>
           <div id="catalogList"></div>
         </div>
 
@@ -749,10 +753,47 @@
 
       $('refreshModels').addEventListener('click', loadModels);
 
+      // ---- HuggingFace auth ----
+      async function loadHfAuth() {
+        try {
+          const s = await api('/v1/auth/hf');
+          if (s.configured) {
+            $('hfDot').className = 'dot ok';
+            $('hfStatus').textContent = 'token configured (' + (s.masked || s.source) + ') — click Verify';
+          } else {
+            $('hfDot').className = 'dot';
+            $('hfStatus').innerHTML = 'not configured — set <code>HF_TOKEN</code> to download gated/private models';
+          }
+        } catch {
+          $('hfDot').className = 'dot bad';
+          $('hfStatus').textContent = 'status unavailable';
+        }
+      }
+      $('hfVerify').addEventListener('click', async () => {
+        $('hfStatus').textContent = 'verifying…';
+        try {
+          const r = await api('/v1/auth/hf/verify', { method: 'POST' });
+          if (r.ok && r.user) {
+            $('hfDot').className = 'dot ok';
+            $('hfStatus').textContent = 'connected as ' + r.user.name + (r.user.fullname ? ' (' + r.user.fullname + ')' : '');
+            toast('HuggingFace: connected as ' + r.user.name);
+          } else {
+            $('hfDot').className = 'dot bad';
+            $('hfStatus').textContent = r.error || 'verification failed';
+            toast(r.error || 'HuggingFace verification failed', true);
+          }
+        } catch (e) {
+          $('hfDot').className = 'dot bad';
+          $('hfStatus').textContent = e.message;
+          toast(e.message, true);
+        }
+      });
+
       // ---- Catalog ----
       let catalogModels = [];
 
       async function loadCatalog() {
+        loadHfAuth();
         try {
           const { models } = await api('/v1/catalog');
           catalogModels = models;

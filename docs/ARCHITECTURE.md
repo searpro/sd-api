@@ -89,6 +89,22 @@ builds the download URL). Install (UI): write `model.json` manifest →
 enqueue a download per chosen component. See the deferred plan to externalize
 this list: `/root/.claude/plans/i-want-to-pull-federated-pixel.md`.
 
+## HuggingFace auth (`src/util/hf-auth.ts`)
+
+Gated/private models need a HuggingFace token. The resolver returns
+`override ?? (HF_TOKEN | HUGGING_FACE_HUB_TOKEN)`. `hfAuthHeaders(url?)` attaches
+`Authorization: Bearer …` for HuggingFace hosts only (never leaks to a CDN
+redirect target). Used by `catalog/hf.ts` (listing) and `downloads/manager.ts`
+(download); both turn a 401/403 into an actionable `gatedHint()` message.
+`hfWhoami()` validates the token (cached 60s) and powers `GET /v1/auth/hf` /
+`POST /v1/auth/hf/verify` (`src/routes/auth.ts`) + the Catalog tab badge.
+
+- **Phase 1 (current)**: token from the env. No runtime setter is exposed.
+- **Phase 2 (planned)**: UI OAuth. `setHfToken()` already provides an in-memory
+  override slot, so a future `POST /v1/auth/hf` + HF OAuth callback can set the
+  token at runtime without an env var. Keep secrets out of logs/responses
+  (`maskToken` only).
+
 ## Binary install (`src/sd/installer.ts`, `src/sd/release.ts`)
 
 On boot, if `sd-cli` isn't found and `autoInstall` is on, download the GitHub

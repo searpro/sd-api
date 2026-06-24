@@ -21,6 +21,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | Catalog | Guided model downloads (format + quantization) | `GET /v1/catalog` |
 | Editing | img2img + reference-image editing (single/multi) | `POST /v1/inputs` |
 | Downloads | Background downloads w/ progress + resume | `GET /v1/downloads` |
+| HF auth | Token (env) for gated/private models + verify | `GET /v1/auth/hf` |
 | LoRA | Per-model LoRAs, prompt-activated `<lora:name:1>` | `type: lora` |
 
 ## Prerequisites
@@ -239,6 +240,38 @@ and the web UI shows per-file status with cancel / resume / discard controls.
 > The model catalog's "Install" enqueues all components at once and shows live
 > per-file progress; a failed file can be resumed from the Models tab.
 
+## HuggingFace authentication
+
+Some models are **gated** (license-accept required) or **private**; downloading
+them — and listing their files in the catalog — needs a HuggingFace token.
+
+**Phase 1 (current): token from the environment.**
+
+1. Create a token at <https://huggingface.co/settings/tokens> (read scope is
+   enough) and, for each gated model, accept its license on the model page.
+2. Set it for the server: `HF_TOKEN=hf_xxx` (or `HUGGING_FACE_HUB_TOKEN`).
+3. The token is attached as a Bearer header on HuggingFace requests only — the
+   catalog file listing (`src/catalog/hf.ts`) and model downloads
+   (`src/downloads/manager.ts`). It is never sent to a non-HuggingFace host
+   (e.g. a CDN redirect target).
+
+Check / verify:
+
+```bash
+curl localhost:3000/v1/auth/hf          # { configured, source, masked }
+curl -X POST localhost:3000/v1/auth/hf/verify   # whoami -> { ok, user: { name } }
+```
+
+The web UI's **Catalog** tab shows a HuggingFace status badge with a **Verify**
+button. When a download fails on a gated/private model, the error explains that
+`HF_TOKEN` is needed and the license must be accepted.
+
+> **Phase 2 (planned): OAuth in the UI.** Let a user connect their HuggingFace
+> account from the browser instead of an env var. The plumbing is ready — the
+> token resolver (`src/util/hf-auth.ts`) already supports an in-memory override
+> via `setHfToken()`; a future `POST /v1/auth/hf` (+ HF OAuth callback) would set
+> it at runtime. See `docs/ARCHITECTURE.md` → "HuggingFace auth".
+
 ## LoRA
 
 LoRAs are **per-model**: each lives in the model bundle's `lora/` sub-directory
@@ -416,4 +449,5 @@ commands (`/check`, `/new-route`).
 ## Future extensions (not yet implemented)
 
 ControlNet, persistent job/download store, GPU scheduling, distributed workers,
-video models (Wan, LTX-2.3), externalized catalog (designed, deferred).
+video models (Wan, LTX-2.3), externalized catalog (designed, deferred),
+HuggingFace OAuth in the UI (Phase 2 of HF auth — token-from-env ships today).

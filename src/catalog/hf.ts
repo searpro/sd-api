@@ -1,4 +1,5 @@
 import type { Format } from './types.js';
+import { hfAuthHeaders, gatedHint } from '../util/hf-auth.js';
 
 /**
  * Minimal HuggingFace Hub client for listing the weight files of a repo and
@@ -75,9 +76,7 @@ export async function listRepoFiles(
   if (hit && Date.now() - hit.time < CACHE_TTL_MS) return hit.files;
 
   const base = `${HF}/api/models/${repo}/tree/main${subPath ? `/${subPath}` : ''}`;
-  const headers: Record<string, string> = { 'User-Agent': 'sd-api' };
-  const token = process.env.HF_TOKEN ?? process.env.HUGGING_FACE_HUB_TOKEN;
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const headers: Record<string, string> = { 'User-Agent': 'sd-api', ...hfAuthHeaders() };
 
   const files: RepoFile[] = [];
   let cursor: string | undefined;
@@ -88,6 +87,11 @@ export async function listRepoFiles(
 
     const res = await fetch(url, { headers, signal });
     if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(
+          `${repo}: ${gatedHint(res.status, `${HF}/${repo}`)}`,
+        );
+      }
       throw new Error(`HuggingFace API ${res.status} ${res.statusText} for ${repo}/${subPath}`);
     }
     const entries = (await res.json()) as HfTreeEntry[];
