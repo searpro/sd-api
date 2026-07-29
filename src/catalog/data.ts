@@ -608,6 +608,53 @@ export const CATALOG: CatalogModel[] = [
       },
     ],
   },
+  {
+    id: 'mage-flow-edit-turbo',
+    name: 'Mage-Flow Edit Turbo (edit)',
+    description:
+      'Fast Mage-Flow instruction-based image editing (4 steps). Provide reference image(s). Diffusion + Mage-VAE + Qwen3-VL-4B.',
+    loadMode: 'diffusion-model',
+    edit: true,
+    reference: `${DOCS}/mage_flow.md`,
+    defaults: { steps: 4, cfg_scale: 1 },
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: { safetensors: { repo: 'microsoft/Mage-Flow-Edit-Turbo', path: 'transformer' } },
+      },
+      {
+        role: 'vae',
+        bundleType: 'vae',
+        label: 'VAE (Mage-VAE)',
+        required: true,
+        quantizable: false,
+        sources: { safetensors: { repo: 'microsoft/Mage-Flow', path: 'vae' } },
+      },
+      {
+        role: 'llm',
+        bundleType: 'clip',
+        label: 'Qwen3-VL-4B text encoder',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'Qwen/Qwen3-VL-4B-Instruct-GGUF' },
+          safetensors: { repo: 'Comfy-Org/Krea-2', path: 'text_encoders' },
+        },
+      },
+      {
+        role: 'llm_vision',
+        bundleType: 'clip',
+        label: 'mmproj (only with GGUF text encoder)',
+        required: false,
+        quantizable: true,
+        sources: { gguf: { repo: 'Qwen/Qwen3-VL-4B-Instruct-GGUF', match: 'mmproj' } },
+      },
+    ],
+  },
 
   // ===== LongCat / Ovis / Anima / ERNIE / Boogu ==============================
   {
