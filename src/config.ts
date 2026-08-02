@@ -8,7 +8,10 @@ import { z } from 'zod';
  * Resolution order (later wins):
  *   1. config/default.json
  *   2. config/local.json (optional, git-ignored)
- *   3. Environment variables (SD_* prefix)
+ *   3. Environment variables (SD_* prefix) — including a `.env` file in the
+ *      project root, loaded via `dotenv/config` at the top of src/index.ts.
+ *      A real shell/CI-exported variable always wins over `.env` (dotenv
+ *      never overrides an already-set variable).
  */
 
 const configFileSchema = z

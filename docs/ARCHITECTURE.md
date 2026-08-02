@@ -121,6 +121,13 @@ validated). Paths resolve relative to cwd. To add a setting, mirror an existing
 field across: the zod schema, the `Config` interface, the env map, and the final
 transform (use the `bool()`/`num()` helpers).
 
+`.env` is loaded via `import 'dotenv/config'` as the first line of
+`src/index.ts` (before `loadConfig()` runs), so `SD_*` vars in `.env` populate
+`process.env` the same as real shell vars — dotenv never overrides a variable
+that's already set, so real env still wins. `config.ts` itself has no dotenv
+dependency (it just reads `process.env`), which keeps it side-effect-free for
+tests that construct a `Config` directly (see `test/helpers.ts`).
+
 ## Conventions in practice
 
 - A new route is a plugin: `export async function xRoutes(fastify) { const app =

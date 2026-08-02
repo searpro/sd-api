@@ -66,9 +66,15 @@ Notes:
 
 ```bash
 npm install
-cp .env.example .env        # then edit SD_BINARY_PATH etc.
+cp .env.example .env        # then edit SD_BINARY_PATH, SD_PORT, etc.
 npm run build && npm start  # or: npm run dev
 ```
+
+`.env` (project root, git-ignored) is loaded automatically at startup via
+`dotenv/config` — no extra flags needed. A real environment variable (set by
+your shell, Docker, systemd, CI, …) always takes precedence over the same key
+in `.env`. To run on a different port, either set `SD_PORT` in `.env` or export
+it: `SD_PORT=8080 npm start`.
 
 Drop a model into a bundle (e.g. `<models_dir>/my-model/checkpoint/model.gguf`,
 or a single `<models_dir>/my-model.gguf` for a full checkpoint), then:

@@ -1,3 +1,8 @@
+// Load .env into process.env before anything reads config. Real environment
+// variables (e.g. set by the shell, Docker, systemd) always win — dotenv does
+// not override a variable that is already set.
+import 'dotenv/config';
+
 import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
 import { hfTokenSource } from './util/hf-auth.js';
