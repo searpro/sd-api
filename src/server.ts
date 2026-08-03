@@ -17,6 +17,7 @@ import { ModelManager } from './models/manager.js';
 import { JobManager } from './jobs/manager.js';
 import { CatalogManager } from './catalog/manager.js';
 import { DownloadManager } from './downloads/manager.js';
+import { LlamaServerManager } from './llm/server-manager.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
@@ -27,11 +28,16 @@ import { downloadRoutes } from './routes/downloads.js';
 import { jobRoutes } from './routes/jobs.js';
 import { outputRoutes } from './routes/outputs.js';
 import { inputRoutes } from './routes/inputs.js';
+import { llmRoutes } from './routes/llm.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.logLevel },
+    // Idle keep-alive sockets (e.g. an OpenAI-client connection pool sitting
+    // on /v1/llm/*) otherwise make close() hang waiting for them to end
+    // naturally — force them shut so shutdown/test teardown is bounded.
+    forceCloseConnections: true,
     bodyLimit: 1024 * 1024, // 1 MiB — requests are small JSON payloads.
   }).withTypeProvider<ZodTypeProvider>();
 
@@ -44,12 +50,14 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   const jobs = new JobManager(config, sd, app.log);
   const catalog = new CatalogManager(app.log);
   const downloads = new DownloadManager(config, models, app.log);
+  const llm = new LlamaServerManager(config, app.log);
   app.decorate('config', config);
   app.decorate('sd', sd);
   app.decorate('models', models);
   app.decorate('jobs', jobs);
   app.decorate('catalog', catalog);
   app.decorate('downloads', downloads);
+  app.decorate('llm', llm);
 
   // OpenAPI 3.1 docs (Phase 8).
   await app.register(fastifySwagger, {
@@ -70,6 +78,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         { name: 'inputs', description: 'Input images for img2img / editing' },
         { name: 'outputs', description: 'Generated images' },
         { name: 'auth', description: 'HuggingFace authentication' },
+        { name: 'llm', description: 'OpenAI-compatible LLM chat/completions (llama.cpp)' },
         { name: 'system', description: 'Health & meta' },
       ],
     },
@@ -118,6 +127,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(inputRoutes);
   await app.register(jobRoutes);
   await app.register(outputRoutes);
+  await app.register(llmRoutes);
 
   // Thin web UI (static, no build step). Served at "/"; API routes above take
   // precedence over the static wildcard. public/ sits next to src/ and dist/.

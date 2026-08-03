@@ -17,8 +17,8 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
   the global error handler, constructs services, decorates them, and registers
   route plugins.
 - **Services** (constructed once, shared): `SdWrapper`, `ModelManager`,
-  `JobManager`, `DownloadManager`, `CatalogManager`. Augmented onto
-  `FastifyInstance` in `src/types.ts`.
+  `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`.
+  Augmented onto `FastifyInstance` in `src/types.ts`.
 
 ## Request → image lifecycle
 
@@ -113,6 +113,70 @@ keyword since asset names embed versions), extract, locate `sd-cli`, and
 repoint config. Prebuilt binaries ship a sibling shared lib whose RUNPATH points
 at the build machine → `SdWrapper.spawnEnv()` adds the binary's dir to the
 loader path.
+
+## LLM serving (`src/llm/`, `src/routes/llm.ts`)
+
+Unlike `sd-cli` (spawned fresh per request, one-shot — see `SdWrapper.run()`),
+`llama-server` is a **persistent process**: started once, kept alive across
+requests, and reverse-proxied to. `LlamaServerManager` (`src/llm/server-manager.ts`)
+owns that lifecycle:
+
+- `start()`/`ensureRunning()` spawn `llama-server` in **router mode** (no `-m` —
+  see `buildLlamaServerArgs()` in `src/llm/args.ts`) and poll `GET /health`
+  until ready or `llmStartupTimeoutMs` elapses (`LLM_STARTUP_FAILED`).
+  Concurrent callers coalesce onto one in-flight spawn via a `startPromise`
+  guard checked **synchronously before any `await`** — checking `status`
+  alone isn't sufficient here, since `doStart()`'s first line (`await
+  mkdir(...)`) leaves a window where `status` is still `'stopped'` even
+  though a spawn is already in flight; a second caller landing in that window
+  would otherwise spawn a duplicate process onto the same port.
+- `stop()` sends `SIGTERM`, waits up to `STOP_GRACE_MS`, then `SIGKILL`.
+- No restart-on-crash policy (`handleExit()` just sets `status='failed'` and
+  logs); the proxy's own `fetch()` failure is the single source of truth for
+  "is llama-server up", not a pre-check (`isReady()`), avoiding a TOCTOU race.
+- `src/index.ts` calls `ensureBinary()` + `start()` non-fatally at boot
+  (mirrors `app.sd.ensureBinary()`) and wires `stop()` into the shutdown
+  handler; a failure here only logs a warning — image generation stays up.
+- Binary resolution/install (`src/llm/installer.ts`) mirrors `SdInstaller`
+  against `ggml-org/llama.cpp` releases, reusing `selectAsset()` from
+  `src/sd/release.ts` unchanged. `src/util/spawn-env.ts` (loader-path env vars
+  for the binary's sibling shared lib) was extracted out of `SdWrapper` so
+  both binaries share it.
+
+`src/routes/llm.ts` reverse-proxies `/v1/llm/*` to `llama-server` **byte for
+byte** — one code path for both streaming and non-streaming, since the body is
+never buffered or reshaped:
+
+```
+fetch(`${app.llm.baseUrl}${upstreamPath}`, { body, signal }) 
+  → reply.raw.writeHead(upstream.status, { content-type })
+  → pipeline(Readable.fromWeb(upstream.body), reply.raw)
+```
+
+Only `model` (+ `messages`/`prompt`/`input` per endpoint) is validated; every
+other field rides through via `.passthrough()` zod schemas (`tools`,
+`response_format`, multimodal `image_url` content parts, …) — without it,
+`fastify-type-provider-zod` would silently strip unknown keys before
+forwarding, since it replaces `request.body` with the *parsed* value.
+
+**Gotcha — abort-on-disconnect must watch `reply.raw`, not `req.raw`/`req`**:
+Node's `IncomingMessage` (`req.raw` on the Fastify side, or the analogous
+`req` in the `fake-llama-server.mjs` test fixture) fires its `'close'` event
+once the request body is fully read — **not** when the client actually
+disconnects. Wiring the abort-controller to that event aborts the upstream
+`fetch()` on every single request, immediately, before any response is
+relayed (symptom: every proxied request silently comes back as an empty `200`
+with no body). The response object (`reply.raw` / `res`) is what correctly
+reflects the connection closing prematurely — listen there instead. This bit
+both the production proxy and the test fixture identically; if a future
+change touches either, re-verify with a live disconnect, not just
+`app.inject()` (which can't model a real socket teardown at all).
+
+`buildServer()` also sets `forceCloseConnections: true` on the Fastify
+instance — without it, `app.close()` hangs indefinitely waiting for idle
+keep-alive sockets (e.g. an OpenAI client's connection pool against
+`/v1/llm/*`) to close on their own, which Node's default `server.close()`
+never forces.
 
 ## Config (`src/config.ts`)
 

@@ -6,11 +6,20 @@ import type { Config } from '../src/config.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 export const FAKE_SD = resolve(here, 'fixtures/fake-sd.mjs');
+export const FAKE_LLAMA_SERVER = resolve(here, 'fixtures/fake-llama-server.mjs');
 
 /** Wrapper script so the fake binary is executed via node and is chmod +x. */
 export async function makeFakeBinary(dir: string): Promise<string> {
   const path = join(dir, 'sd');
   await writeFile(path, `#!/bin/sh\nexec node "${FAKE_SD}" "$@"\n`);
+  await chmod(path, 0o755);
+  return path;
+}
+
+/** Wrapper script so the fake long-running llama-server is spawnable like a real binary. */
+export async function makeFakeLlamaBinary(dir: string): Promise<string> {
+  const path = join(dir, 'llama-server');
+  await writeFile(path, `#!/bin/sh\nexec node "${FAKE_LLAMA_SERVER}" "$@"\n`);
   await chmod(path, 0o755);
   return path;
 }
@@ -34,6 +43,9 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
   await writeFile(join(modelsDir, 'full.gguf'), 'dummy');
 
   const sdBinaryPath = await makeFakeBinary(root);
+  const llmModelsDir = join(root, 'llm-models');
+  await mkdir(llmModelsDir, { recursive: true });
+  const llmBinaryPath = await makeFakeLlamaBinary(root);
 
   return {
     sdBinaryPath,
@@ -51,6 +63,19 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     installDir: join(root, 'bin'),
     releaseTag: 'latest',
     accel: 'cpu',
+    llmBinaryPath,
+    llmAutoInstall: false,
+    llmInstallDir: join(root, 'llm-bin'),
+    llmReleaseTag: 'latest',
+    llmAccel: 'cpu',
+    llmModelsDir,
+    // Randomized to reduce collision risk between concurrently-run test files
+    // (llama-server, unlike Fastify, doesn't support port:0 for auto-assign).
+    llmPort: 20000 + Math.floor(Math.random() * 20000),
+    llmCtxSize: 512,
+    llmGpuLayers: -1,
+    llmJinja: true,
+    llmStartupTimeoutMs: 5000,
     ...overrides,
   };
 }

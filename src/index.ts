@@ -31,8 +31,22 @@ async function main(): Promise<void> {
     );
   }
 
+  // Ensure a usable llama-server binary exists and start it (router mode).
+  // Non-fatal: the rest of the app stays usable if this fails; /v1/llm/*
+  // requests will surface a clean LLM_SERVER_UNAVAILABLE until it's fixed.
+  try {
+    await app.llm.ensureBinary();
+    await app.llm.start();
+  } catch (err) {
+    app.log.warn(
+      { err: (err as Error).message },
+      'llama-server unavailable; /v1/llm/* requests will fail until it is installed/running',
+    );
+  }
+
   const close = async (signal: string) => {
     app.log.info({ signal }, 'shutting down');
+    await app.llm.stop();
     await app.close();
     process.exit(0);
   };

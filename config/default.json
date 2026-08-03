@@ -13,5 +13,16 @@
   "auto_install": true,
   "install_dir": "./data/bin",
   "release_tag": "latest",
-  "accel": "cpu"
+  "accel": "cpu",
+  "llm_binary_path": "llama-server",
+  "llm_auto_install": true,
+  "llm_install_dir": "./data/llm-bin",
+  "llm_release_tag": "latest",
+  "llm_accel": "cpu",
+  "llm_models_dir": "./data/llm-models",
+  "llm_port": 8090,
+  "llm_ctx_size": 4096,
+  "llm_gpu_layers": -1,
+  "llm_jinja": true,
+  "llm_startup_timeout_ms": 30000
 }

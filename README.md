@@ -23,6 +23,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | Downloads | Background downloads w/ progress + resume | `GET /v1/downloads` |
 | HF auth | Token (env) for gated/private models + verify | `GET /v1/auth/hf` |
 | LoRA | Per-model LoRAs, prompt-activated `<lora:name:1>` | `type: lora` |
+| LLM | OpenAI-compatible LLM/VLM serving via llama.cpp, streaming | `POST /v1/llm/chat/completions` |
 
 ## Prerequisites
 
@@ -316,6 +317,120 @@ img2img" panel for uploading reference / init images.
 Catalog edit models: FLUX.1-Kontext-dev, Qwen-Image-Edit, Qwen-Image-Edit-2509
 (multi-ref), Qwen-Image-Edit-2511.
 
+## LLM serving (llama.cpp)
+
+Alongside image generation, sd-api also serves LLMs (including vision-language
+models) via an embedded [`llama-server`](https://github.com/ggml-org/llama.cpp)
+process, exposed as a strict **OpenAI-compatible** API at `/v1/llm/*`.
+
+`llama-server` runs in **router mode**: it's started once (no `-m` flag),
+auto-discovers GGUF models under the configured LLM models directory, and
+loads/routes each request by the `"model"` field in the JSON body — the same
+way an OpenAI-compatible client already expects. sd-api reverse-proxies
+`/v1/llm/*` to it byte-for-byte (streaming and non-streaming alike), so any
+OpenAI SDK client works unmodified by pointing `base_url` at `.../v1/llm`.
+
+> **Phase 1 status**: model placement is manual (drop a GGUF file/directory
+> under the LLM models directory) — a download catalog and model-management UI
+> for LLMs, matching the image side, are planned for a future update. The
+> **Chat** sub-tab under the web UI's **LLM** tab works today; **Models** and
+> **Catalog** sub-tabs are placeholders.
+
+### Quick start
+
+```bash
+# Place a GGUF model (and an optional mmproj-*.gguf for vision) under the LLM
+# models directory (default ./data/llm-models), e.g.:
+mkdir -p ./data/llm-models/qwen3-4b
+cp ~/downloads/qwen3-4b-Q4_K_M.gguf ./data/llm-models/qwen3-4b/
+
+npm start   # llama-server is auto-installed and started alongside sd-api
+```
+
+The model id an OpenAI client passes as `"model"` is simply the subdirectory
+name under the LLM models directory (`qwen3-4b` above).
+
+### OpenAI Python client
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:3000/v1/llm", api_key="unused")
+
+resp = client.chat.completions.create(
+    model="qwen3-4b",
+    messages=[{"role": "user", "content": "Explain diffusion models in one sentence."}],
+)
+print(resp.choices[0].message.content)
+```
+
+### Streaming
+
+```bash
+curl -N localhost:3000/v1/llm/chat/completions -H 'content-type: application/json' -d '{
+  "model": "qwen3-4b",
+  "messages": [{"role": "user", "content": "Count to 5."}],
+  "stream": true
+}'
+# data: {"choices":[{"delta":{"content":"1"},...}]}
+# ...
+# data: [DONE]
+```
+
+### Vision / multimodal
+
+For a model paired with an `mmproj-*.gguf` vision projector, pass image
+content parts exactly as documented by llama.cpp — a remote URL, a local
+file path, or an inline base64 data URI:
+
+```bash
+curl localhost:3000/v1/llm/chat/completions -H 'content-type: application/json' -d '{
+  "model": "qwen2.5-vl",
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "What is in this image?"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KG..."}}
+    ]
+  }]
+}'
+```
+
+### Endpoints
+
+All strictly OpenAI-shaped and proxied to `llama-server` unmodified:
+
+| Endpoint | Notes |
+| --- | --- |
+| `POST /v1/llm/chat/completions` | Streaming (`stream:true`) and multimodal content parts |
+| `POST /v1/llm/completions` | Legacy text completions |
+| `POST /v1/llm/embeddings` | Embeddings |
+| `GET /v1/llm/models` | Lists models discovered by `llama-server` |
+
+`/v1/llm/*` is reserved exclusively for this OpenAI-compatible surface — our
+own LLM bundle/catalog management (future work) will live at flat siblings
+like `/v1/llm-models`, not nested under `/v1/llm/`.
+
+### Configuration
+
+| Env var | Config key | Default | Meaning |
+| ------- | ---------- | ------- | ------- |
+| `SD_LLM_BINARY_PATH` | `llm_binary_path` | `llama-server` | Path to the binary (or a bare command on `PATH`) |
+| `SD_LLM_AUTO_INSTALL` | `llm_auto_install` | `true` | Download a prebuilt release if the binary is missing |
+| `SD_LLM_INSTALL_DIR` | `llm_install_dir` | `./data/llm-bin` | Where downloaded binaries are unpacked |
+| `SD_LLM_RELEASE_TAG` | `llm_release_tag` | `latest` | Release to install (`latest` or a specific tag) |
+| `SD_LLM_ACCEL` | `llm_accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
+| `SD_LLM_MODELS_DIR` | `llm_models_dir` | `./data/llm-models` | Root scanned by `llama-server --models-dir` |
+| `SD_LLM_PORT` | `llm_port` | `8090` | Internal port `llama-server` listens on (`127.0.0.1` only, not exposed directly) |
+| `SD_LLM_CTX_SIZE` | `llm_ctx_size` | `4096` | Context size (`-c`) |
+| `SD_LLM_GPU_LAYERS` | `llm_gpu_layers` | `-1` | GPU layers (`-ngl`); `-1` omits the flag (auto) |
+| `SD_LLM_JINJA` | `llm_jinja` | `true` | Enable chat-template/tool-calling support (`--jinja`) |
+| `SD_LLM_STARTUP_TIMEOUT_MS` | `llm_startup_timeout_ms` | `30000` | How long to wait for `/health` before giving up |
+
+If `llama-server` fails to install or start, sd-api logs a warning and keeps
+serving image generation — `/v1/llm/*` requests fail with
+`LLM_SERVER_UNAVAILABLE` until it's fixed and the process restarted.
+
 ## API overview
 
 ### `POST /v1/generate` — synchronous generation
@@ -409,7 +524,9 @@ text cannot inject extra flags or shell commands.
 
 Codes: `VALIDATION_ERROR`, `MODEL_NOT_FOUND`, `INVALID_MODEL`, `MISSING_WEIGHTS`,
 `GENERATION_FAILED`, `PROCESS_TIMEOUT`, `BINARY_NOT_FOUND`, `JOB_NOT_FOUND`,
-`OUTPUT_NOT_FOUND`, `INVALID_PATH`, `DOWNLOAD_FAILED`, `INTERNAL_ERROR`.
+`OUTPUT_NOT_FOUND`, `INPUT_NOT_FOUND`, `INVALID_PATH`, `DOWNLOAD_FAILED`,
+`LLM_BINARY_NOT_FOUND`, `LLM_STARTUP_FAILED`, `LLM_SERVER_UNAVAILABLE`,
+`LLM_UPSTREAM_ERROR`, `INTERNAL_ERROR`.
 
 ## Security (Spec section 5)
 
@@ -433,10 +550,11 @@ src/
   downloads/        # background download manager (progress + resume)
   catalog/          # curated model catalog + HuggingFace file listing
   jobs/             # in-memory job queue + manager
-  routes/           # generate, jobs, models, outputs, health
+  llm/              # llama-server process manager, arg mapping, installer
+  routes/           # generate, jobs, models, outputs, health, llm
   util/             # path safety, filename, validation
 public/             # thin web UI (single static index.html, no build step)
-test/               # vitest unit + integration tests (uses a fake `sd` binary)
+test/               # vitest unit + integration tests (uses fake `sd`/`llama-server` binaries)
 ```
 
 ## Development
@@ -457,3 +575,7 @@ commands (`/check`, `/new-route`).
 ControlNet, persistent job/download store, GPU scheduling, distributed workers,
 video models (Wan, LTX-2.3), externalized catalog (designed, deferred),
 HuggingFace OAuth in the UI (Phase 2 of HF auth — token-from-env ships today).
+
+LLM serving is Phase 1 only (see above): model management (`/v1/llm-models`),
+a downloadable catalog (`/v1/llm-catalog`), image-attach in the Chat UI, and
+LoRA/restart-policy/preset support for `llama-server` are planned follow-ups.

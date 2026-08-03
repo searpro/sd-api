@@ -31,6 +31,17 @@ const configFileSchema = z
     install_dir: z.string(),
     release_tag: z.string(),
     accel: z.enum(['cpu', 'vulkan', 'cuda', 'rocm']),
+    llm_binary_path: z.string(),
+    llm_auto_install: z.boolean(),
+    llm_install_dir: z.string(),
+    llm_release_tag: z.string(),
+    llm_accel: z.enum(['cpu', 'vulkan', 'cuda', 'rocm']),
+    llm_models_dir: z.string(),
+    llm_port: z.number().int().positive(),
+    llm_ctx_size: z.number().int().positive(),
+    llm_gpu_layers: z.number().int().min(-1),
+    llm_jinja: z.boolean(),
+    llm_startup_timeout_ms: z.number().int().positive(),
   })
   .partial();
 
@@ -54,6 +65,30 @@ export interface Config {
   releaseTag: string;
   /** Hardware backend to prefer when selecting a release asset. */
   accel: 'cpu' | 'vulkan' | 'cuda' | 'rocm';
+
+  // --- LLM serving (llama.cpp) ---
+  /** Path to the llama-server binary (or a bare command on PATH). */
+  llmBinaryPath: string;
+  /** Download a prebuilt llama-server release at startup if none is found. */
+  llmAutoInstall: boolean;
+  /** Where auto-installed llama-server binaries are unpacked. */
+  llmInstallDir: string;
+  /** llama.cpp release tag to install ("latest" or a specific tag). */
+  llmReleaseTag: string;
+  /** Hardware backend to prefer when selecting a llama.cpp release asset. */
+  llmAccel: 'cpu' | 'vulkan' | 'cuda' | 'rocm';
+  /** Root directory llama-server's router mode scans for GGUF models. */
+  llmModelsDir: string;
+  /** Internal port llama-server listens on (bound to 127.0.0.1 only). */
+  llmPort: number;
+  /** Default context size (-c) for loaded models. */
+  llmCtxSize: number;
+  /** Default GPU layers (-ngl); -1 means omit the flag (let llama-server auto-decide). */
+  llmGpuLayers: number;
+  /** Enable jinja chat-template + tool-calling support (--jinja). */
+  llmJinja: boolean;
+  /** Max time to wait for llama-server's /health to become ready at startup. */
+  llmStartupTimeoutMs: number;
 }
 
 function readJsonIfExists(path: string): Record<string, unknown> {
@@ -102,6 +137,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     install_dir: env.SD_INSTALL_DIR,
     release_tag: env.SD_RELEASE_TAG,
     accel: env.SD_ACCEL,
+    llm_binary_path: env.SD_LLM_BINARY_PATH,
+    llm_auto_install: bool(env.SD_LLM_AUTO_INSTALL),
+    llm_install_dir: env.SD_LLM_INSTALL_DIR,
+    llm_release_tag: env.SD_LLM_RELEASE_TAG,
+    llm_accel: env.SD_LLM_ACCEL,
+    llm_models_dir: env.SD_LLM_MODELS_DIR,
+    llm_port: num(env.SD_LLM_PORT),
+    llm_ctx_size: num(env.SD_LLM_CTX_SIZE),
+    llm_gpu_layers: num(env.SD_LLM_GPU_LAYERS),
+    llm_jinja: bool(env.SD_LLM_JINJA),
+    llm_startup_timeout_ms: num(env.SD_LLM_STARTUP_TIMEOUT_MS),
   });
 
   const merged = { ...fileConfig, ...stripUndefined(envConfig) };
@@ -125,6 +171,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     installDir: resolve(process.cwd(), parsed.install_dir),
     releaseTag: parsed.release_tag,
     accel: parsed.accel,
+    llmBinaryPath: parsed.llm_binary_path,
+    llmAutoInstall: parsed.llm_auto_install,
+    llmInstallDir: resolve(process.cwd(), parsed.llm_install_dir),
+    llmReleaseTag: parsed.llm_release_tag,
+    llmAccel: parsed.llm_accel,
+    llmModelsDir: resolve(process.cwd(), parsed.llm_models_dir),
+    llmPort: parsed.llm_port,
+    llmCtxSize: parsed.llm_ctx_size,
+    llmGpuLayers: parsed.llm_gpu_layers,
+    llmJinja: parsed.llm_jinja,
+    llmStartupTimeoutMs: parsed.llm_startup_timeout_ms,
   };
 }
 

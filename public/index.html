@@ -56,6 +56,20 @@
       }
       .tab.active { color: var(--text); background: var(--panel); border-color: var(--border); }
 
+      .subtabs { display: flex; gap: 4px; margin-bottom: 16px; }
+      .subtab {
+        padding: 6px 14px; border: 1px solid var(--border); border-radius: 999px;
+        background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 13px;
+      }
+      .subtab.active { color: var(--text); background: var(--accent); border-color: var(--accent); }
+
+      .chat-log { display: flex; flex-direction: column; gap: 10px; min-height: 300px; max-height: 55vh; overflow: auto; }
+      .bubble { align-self: flex-start; max-width: 80%; background: var(--panel-2); border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; }
+      .bubble.user { align-self: flex-end; background: var(--accent); color: #fff; }
+      .chat-form { margin-top: 12px; display: flex; gap: 8px; }
+      .chat-form textarea { flex: 1; min-height: 44px; }
+      .chat-form button.primary { margin-top: 0; width: auto; padding: 0 18px; }
+
       main { padding: 20px; max-width: 1100px; margin: 0 auto; }
       .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
       @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
@@ -135,6 +149,7 @@
       <button class="tab active" data-tab="generate">Generate</button>
       <button class="tab" data-tab="catalog">Catalog</button>
       <button class="tab" data-tab="models">Models</button>
+      <button class="tab" data-tab="llm">LLM</button>
     </div>
 
     <main>
@@ -279,6 +294,49 @@
           <div class="empty hidden" id="modelsEmpty">No models installed yet.</div>
         </div>
       </section>
+
+      <!-- LLM -->
+      <section id="tab-llm" class="hidden">
+        <div class="subtabs">
+          <button class="subtab active" data-subtab="chat">Chat</button>
+          <button class="subtab" data-subtab="llm-models">Models</button>
+          <button class="subtab" data-subtab="llm-catalog">Catalog</button>
+        </div>
+
+        <div id="subtab-chat" class="grid">
+          <div class="panel">
+            <h2>Chat</h2>
+            <label for="llmModel">Model</label>
+            <input id="llmModel" placeholder="model id (as placed under llm-models dir)" required />
+            <p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;line-height:1.5;">
+              Manually place a GGUF file (or a directory containing one, plus an optional
+              <code>mmproj-*.gguf</code> for vision) under the server's configured LLM models
+              directory, then enter its id here. A model picker and downloadable catalog are
+              coming in a future update — served OpenAI-compatible at
+              <code>/v1/llm/chat/completions</code>.
+            </p>
+          </div>
+
+          <div class="panel result">
+            <h2>Conversation</h2>
+            <div class="chat-log" id="chatLog"></div>
+            <form class="chat-form" id="chatForm">
+              <textarea id="chatInput" placeholder="Say something…" required></textarea>
+              <button class="primary" id="chatSendBtn" type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+
+        <div id="subtab-llm-models" class="panel hidden">
+          <h2>LLM Models</h2>
+          <p style="color:var(--muted);">Coming soon — download, list and delete LLM models from this tab, mirroring the image-model Models tab.</p>
+        </div>
+
+        <div id="subtab-llm-catalog" class="panel hidden">
+          <h2>LLM Catalog</h2>
+          <p style="color:var(--muted);">Coming soon — a curated catalog of downloadable GGUF/vision-language models, mirroring the image Catalog tab.</p>
+        </div>
+      </section>
     </main>
 
     <div class="toast" id="toast"></div>
@@ -318,8 +376,21 @@
           $('tab-generate').classList.toggle('hidden', tab !== 'generate');
           $('tab-catalog').classList.toggle('hidden', tab !== 'catalog');
           $('tab-models').classList.toggle('hidden', tab !== 'models');
+          $('tab-llm').classList.toggle('hidden', tab !== 'llm');
           if (tab === 'models') loadModels();
           if (tab === 'catalog') loadCatalog();
+        });
+      });
+
+      // ---- LLM sub-tabs ----
+      document.querySelectorAll('.subtab').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.subtab').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          const sub = btn.dataset.subtab;
+          $('subtab-chat').classList.toggle('hidden', sub !== 'chat');
+          $('subtab-llm-models').classList.toggle('hidden', sub !== 'llm-models');
+          $('subtab-llm-catalog').classList.toggle('hidden', sub !== 'llm-catalog');
         });
       });
 
@@ -960,6 +1031,78 @@
       }
 
       $('refreshCatalog').addEventListener('click', loadCatalog);
+
+      // ---- LLM chat ----
+      let chatMessages = [];
+
+      function renderChatLog() {
+        const log = $('chatLog');
+        log.innerHTML = '';
+        chatMessages.forEach((m) => {
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble' + (m.role === 'user' ? ' user' : '');
+          bubble.textContent = m.content;
+          log.appendChild(bubble);
+        });
+        log.scrollTop = log.scrollHeight;
+      }
+
+      $('chatForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const model = $('llmModel').value.trim();
+        const text = $('chatInput').value;
+        if (!model) { toast('Enter a model id first', true); return; }
+        if (!text.trim()) return;
+
+        chatMessages.push({ role: 'user', content: text });
+        const assistantMsg = { role: 'assistant', content: '' };
+        chatMessages.push(assistantMsg);
+        renderChatLog();
+        $('chatInput').value = '';
+        $('chatSendBtn').disabled = true;
+
+        try {
+          const res = await fetch('/v1/llm/chat/completions', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              messages: chatMessages.slice(0, -1).map(({ role, content }) => ({ role, content })),
+              stream: true,
+            }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body?.error?.message || res.statusText);
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop() ?? '';
+            for (const part of parts) {
+              const line = part.replace(/^data: /, '').trim();
+              if (!line || line === '[DONE]') continue;
+              try {
+                const chunk = JSON.parse(line);
+                const delta = chunk.choices?.[0]?.delta?.content;
+                if (delta) { assistantMsg.content += delta; renderChatLog(); }
+              } catch { /* ignore malformed keep-alive lines */ }
+            }
+          }
+        } catch (err) {
+          if (!assistantMsg.content) assistantMsg.content = 'Error: ' + err.message;
+          renderChatLog();
+          toast(err.message, true);
+        } finally {
+          $('chatSendBtn').disabled = false;
+        }
+      });
 
       // ---- Init ----
       fillSamplers();
