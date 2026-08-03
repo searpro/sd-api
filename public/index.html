@@ -307,13 +307,12 @@
           <div class="panel">
             <h2>Chat</h2>
             <label for="llmModel">Model</label>
-            <input id="llmModel" placeholder="model id (as placed under llm-models dir)" required />
+            <input id="llmModel" list="llmModelIds" placeholder="model id (see the Models sub-tab)" required />
+            <datalist id="llmModelIds"></datalist>
             <p style="color:var(--muted);font-size:11.5px;margin:8px 0 0;line-height:1.5;">
-              Manually place a GGUF file (or a directory containing one, plus an optional
-              <code>mmproj-*.gguf</code> for vision) under the server's configured LLM models
-              directory, then enter its id here. A model picker and downloadable catalog are
-              coming in a future update — served OpenAI-compatible at
-              <code>/v1/llm/chat/completions</code>.
+              Install a model from the <strong>Catalog</strong> sub-tab (or drop a GGUF file under
+              the server's LLM models directory yourself), then enter its id here — served
+              OpenAI-compatible at <code>/v1/llm/chat/completions</code>.
             </p>
           </div>
 
@@ -327,14 +326,61 @@
           </div>
         </div>
 
-        <div id="subtab-llm-models" class="panel hidden">
-          <h2>LLM Models</h2>
-          <p style="color:var(--muted);">Coming soon — download, list and delete LLM models from this tab, mirroring the image-model Models tab.</p>
+        <!-- LLM MODELS -->
+        <div id="subtab-llm-models" class="grid hidden">
+          <div class="panel">
+            <h2>Add component</h2>
+            <p style="color:var(--muted);font-size:12px;margin:0 0 4px;">
+              Each LLM model is a bundle: its GGUF weights, plus an optional <code>mmproj</code>
+              vision projector for VLMs, both directly under <code>&lt;llmModelsDir&gt;/&lt;id&gt;/</code>.
+            </p>
+            <form id="llmDlForm">
+              <label for="llmDlModel">Model name</label>
+              <input id="llmDlModel" list="llmModelList" placeholder="e.g. qwen3-8b" required />
+              <datalist id="llmModelList"></datalist>
+              <label for="llmDlType">Component</label>
+              <select id="llmDlType">
+                <option value="gguf">gguf (weights)</option>
+                <option value="mmproj">mmproj (vision projector)</option>
+              </select>
+              <label for="llmDlUrl">URL</label>
+              <input id="llmDlUrl" type="url" placeholder="https://…/file.gguf" required />
+              <label for="llmDlName">Filename (optional)</label>
+              <input id="llmDlName" placeholder="inferred from URL" />
+              <button class="primary" id="llmDlBtn" type="submit">Download into bundle</button>
+            </form>
+          </div>
+
+          <div class="panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <h2 style="margin:0;">Installed LLM models</h2>
+              <button class="ghost" id="refreshLlmModels" type="button">Refresh</button>
+            </div>
+            <div id="llmModelCards"></div>
+            <div class="empty hidden" id="llmModelsEmpty">No LLM models installed yet.</div>
+          </div>
         </div>
 
-        <div id="subtab-llm-catalog" class="panel hidden">
-          <h2>LLM Catalog</h2>
-          <p style="color:var(--muted);">Coming soon — a curated catalog of downloadable GGUF/vision-language models, mirroring the image Catalog tab.</p>
+        <!-- LLM CATALOG -->
+        <div id="subtab-llm-catalog" class="grid hidden">
+          <div class="panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <h2 style="margin:0;">LLM catalog</h2>
+              <button class="ghost" id="refreshLlmCatalog" type="button">Refresh</button>
+            </div>
+            <p style="color:var(--muted);font-size:12px;margin:0 0 10px;">
+              Curated GGUF-quantized LLMs, all under 30B params. Pick a model, then choose a
+              quantization for each component.
+            </p>
+            <div id="llmCatalogList"></div>
+          </div>
+
+          <div class="panel">
+            <h2 id="llmCatalogDetailTitle">Select a model</h2>
+            <div id="llmCatalogDetail">
+              <span class="hint" style="color:var(--muted)">Choose a model from the list to configure its download.</span>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -391,6 +437,8 @@
           $('subtab-chat').classList.toggle('hidden', sub !== 'chat');
           $('subtab-llm-models').classList.toggle('hidden', sub !== 'llm-models');
           $('subtab-llm-catalog').classList.toggle('hidden', sub !== 'llm-catalog');
+          if (sub === 'llm-models') loadLlmModels();
+          if (sub === 'llm-catalog') loadLlmCatalog();
         });
       });
 
@@ -1104,10 +1152,326 @@
         }
       });
 
+      // ---- LLM Models ----
+      function llmCompRow(model, type, file) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;';
+        const left = document.createElement('div');
+        left.innerHTML = '<span class="pill">' + type + '</span> ' + file.name +
+          ' <span style="color:var(--muted)">· ' + fmtSize(file.size) + '</span>';
+        const del = document.createElement('button');
+        del.className = 'danger'; del.textContent = '✕';
+        del.title = 'Delete component';
+        del.onclick = () => deleteLlmComponent(model, type, file.name);
+        row.append(left, del);
+        return row;
+      }
+
+      function llmDownloadRow(model, task) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);';
+        const statusColor = task.status === 'failed' ? 'var(--danger)' : task.status === 'completed' ? 'var(--accent-2)' : 'var(--muted)';
+        const top = document.createElement('div');
+        top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        top.innerHTML = '<span><span class="pill">' + task.type + '</span> ' + task.name +
+          ' <span style="color:' + statusColor + ';font-size:11px">· ' + task.status + (task.resumed ? ' (resumed)' : '') + '</span></span>';
+        const actions = document.createElement('span');
+        if (task.status === 'downloading' || task.status === 'queued') {
+          const c = document.createElement('button'); c.className = 'ghost'; c.textContent = 'Cancel';
+          c.onclick = async () => { try { await api('/v1/llm-downloads/' + task.id + '/cancel', { method: 'POST' }); refreshLlmModelsSoon(); } catch (e) { toast(e.message, true); } };
+          actions.appendChild(c);
+        } else if (task.status === 'failed' || task.status === 'cancelled') {
+          const r = document.createElement('button'); r.className = 'ghost'; r.textContent = 'Resume';
+          r.onclick = async () => { try { await api('/v1/llm-downloads/' + task.id + '/retry', { method: 'POST' }); ensureLlmDownloadPolling(); refreshLlmModelsSoon(); } catch (e) { toast(e.message, true); } };
+          const x = document.createElement('button'); x.className = 'danger'; x.textContent = 'Discard';
+          x.onclick = async () => { try { await api('/v1/llm-downloads/' + task.id + '?discard=true', { method: 'DELETE' }); refreshLlmModelsSoon(); } catch (e) { toast(e.message, true); } };
+          actions.append(r, x);
+        }
+        top.appendChild(actions);
+        row.appendChild(top);
+        if (task.status === 'downloading' || task.status === 'queued') {
+          const bar = document.createElement('div');
+          bar.innerHTML = progressBarHtml(task.received, task.total);
+          row.appendChild(bar);
+        } else if (task.error) {
+          const e = document.createElement('div'); e.style.cssText = 'font-size:11px;color:var(--danger);margin-top:2px;'; e.textContent = task.error;
+          row.appendChild(e);
+        }
+        return row;
+      }
+
+      function llmPartialRow(model, p) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        const pct = p.total ? Math.round((p.received / p.total) * 100) + '%' : fmtSize(p.received);
+        const left = document.createElement('div');
+        left.innerHTML = '<span class="pill">' + p.type + '</span> ' + p.name +
+          ' <span style="color:var(--muted);font-size:11px">· partial ' + pct + '</span>';
+        const acts = document.createElement('span');
+        const r = document.createElement('button'); r.className = 'ghost'; r.textContent = 'Resume';
+        r.onclick = async () => {
+          try { await api('/v1/llm-downloads/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, type: p.type, name: p.name }) }); ensureLlmDownloadPolling(); refreshLlmModelsSoon(); }
+          catch (e) { toast(e.message, true); }
+        };
+        acts.appendChild(r);
+        row.append(left, acts);
+        return row;
+      }
+
+      let llmModelsRefreshTimer = null;
+      function refreshLlmModelsSoon() { clearTimeout(llmModelsRefreshTimer); llmModelsRefreshTimer = setTimeout(loadLlmModels, 300); }
+
+      async function loadLlmModels() {
+        try {
+          const [{ models }, dl] = await Promise.all([api('/v1/llm-models'), api('/v1/llm-downloads')]);
+          const downloads = dl.downloads || [];
+          const byModel = {};
+          downloads.forEach((t) => { (byModel[t.model] = byModel[t.model] || []).push(t); });
+
+          $('llmModelList').innerHTML = models.map((m) => '<option value="' + m.id + '">').join('');
+          $('llmModelIds').innerHTML = models.filter((m) => m.ready).map((m) => '<option value="' + m.id + '">').join('');
+          const wrap = $('llmModelCards');
+          wrap.innerHTML = '';
+          $('llmModelsEmpty').classList.toggle('hidden', models.length > 0 || downloads.length > 0);
+
+          const known = new Set(models.map((m) => m.id));
+          Object.keys(byModel).forEach((id) => { if (!known.has(id)) models.push({ id, name: id, weights: null, mmproj: null, ready: false, partials: [], _pending: true }); });
+
+          models.forEach((m) => {
+            const card = document.createElement('div');
+            card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--panel-2);';
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
+            const badge = m.ready
+              ? '<span class="pill" style="border-color:var(--accent-2);color:#7ee2a8">' + (m.mmproj ? 'vision' : 'ready') + '</span>'
+              : '<span class="pill" style="border-color:var(--danger);color:#f5a8a3">no weights</span>';
+            head.innerHTML = '<strong>' + m.name + '</strong> ' + badge;
+            const delAll = document.createElement('button');
+            delAll.className = 'danger'; delAll.textContent = 'Delete model';
+            delAll.onclick = () => deleteLlmModel(m.id);
+            head.appendChild(delAll);
+            card.appendChild(head);
+
+            if (m.weights) card.appendChild(llmCompRow(m.id, 'gguf', m.weights));
+            if (m.mmproj) card.appendChild(llmCompRow(m.id, 'mmproj', m.mmproj));
+
+            const active = (byModel[m.id] || []).filter((t) => t.status !== 'completed');
+            active.forEach((t) => card.appendChild(llmDownloadRow(m.id, t)));
+
+            const activeNames = new Set(active.map((t) => t.type + '/' + t.name));
+            (m.partials || []).forEach((p) => { if (!activeNames.has(p.type + '/' + p.name)) card.appendChild(llmPartialRow(m.id, p)); });
+
+            if (!m.weights && !m.mmproj && !active.length && (!m.partials || !m.partials.length)) {
+              const e = document.createElement('div'); e.style.cssText = 'color:var(--muted);font-size:12px;'; e.textContent = 'Empty bundle — add GGUF weights.';
+              card.appendChild(e);
+            }
+            wrap.appendChild(card);
+          });
+        } catch (e) { toast(e.message, true); }
+      }
+
+      let llmDownloadPoller = null;
+      function ensureLlmDownloadPolling() {
+        if (llmDownloadPoller) return;
+        llmDownloadPoller = setInterval(async () => {
+          try {
+            const { downloads } = await api('/v1/llm-downloads');
+            const anyActive = downloads.some((t) => t.status === 'downloading' || t.status === 'queued');
+            if ($('subtab-llm-models') && !$('subtab-llm-models').classList.contains('hidden')) loadLlmModels();
+            if (!anyActive) { clearInterval(llmDownloadPoller); llmDownloadPoller = null; }
+          } catch { /* keep polling */ }
+        }, 1200);
+      }
+
+      async function deleteLlmModel(id) {
+        if (!confirm('Delete LLM model "' + id + '" and all its files?')) return;
+        try {
+          await api('/v1/llm-models/' + encodeURIComponent(id), { method: 'DELETE' });
+          toast('Deleted ' + id);
+          loadLlmModels();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      async function deleteLlmComponent(model, type, name) {
+        if (!confirm('Delete ' + type + ' "' + name + '" from ' + model + '?')) return;
+        try {
+          await api('/v1/llm-models/' + encodeURIComponent(model) + '/' + type + '/' + encodeURIComponent(name), { method: 'DELETE' });
+          toast('Deleted ' + name);
+          loadLlmModels();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      $('llmDlForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+          model: $('llmDlModel').value.trim(),
+          type: $('llmDlType').value,
+          url: $('llmDlUrl').value,
+        };
+        const name = $('llmDlName').value.trim();
+        if (name) payload.name = name;
+        $('llmDlBtn').disabled = true; $('llmDlBtn').textContent = 'Queuing…';
+        try {
+          const task = await api('/v1/llm-models/download', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          toast('Download queued: ' + task.name);
+          $('llmDlUrl').value = ''; $('llmDlName').value = '';
+          ensureLlmDownloadPolling();
+          loadLlmModels();
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          $('llmDlBtn').disabled = false; $('llmDlBtn').textContent = 'Download into bundle';
+        }
+      });
+
+      $('refreshLlmModels').addEventListener('click', loadLlmModels);
+
+      // ---- LLM Catalog ----
+      let llmCatalogModels = [];
+
+      async function loadLlmCatalog() {
+        try {
+          const { models } = await api('/v1/llm-catalog');
+          llmCatalogModels = models;
+          const list = $('llmCatalogList');
+          list.innerHTML = '';
+          models.forEach((m) => {
+            const card = document.createElement('div');
+            card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel-2);cursor:pointer;';
+            const visionBadge = m.vision ? ' <span class="pill" style="border-color:var(--accent);color:#9cc2ff">vision</span>' : '';
+            card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + m.params + 'B · ' + m.family + '</span>' + visionBadge +
+              '<div style="color:var(--muted);font-size:12px;margin-top:3px;">' + (m.description || '') + '</div>';
+            card.onclick = () => { document.querySelectorAll('#llmCatalogList > div').forEach(d => d.style.borderColor = 'var(--border)'); card.style.borderColor = 'var(--accent)'; selectLlmCatalogModel(m.id); };
+            list.appendChild(card);
+          });
+        } catch (e) { toast(e.message, true); }
+      }
+
+      async function selectLlmCatalogModel(id) {
+        const model = llmCatalogModels.find((m) => m.id === id);
+        $('llmCatalogDetailTitle').textContent = model.name;
+        const detail = $('llmCatalogDetail');
+        detail.innerHTML = '<span style="color:var(--muted)">Loading available quantizations from HuggingFace…</span>';
+        let data;
+        try {
+          data = await api('/v1/llm-catalog/' + encodeURIComponent(id) + '/files');
+        } catch (e) { detail.innerHTML = '<span style="color:var(--danger)">' + e.message + '</span>'; return; }
+
+        detail.innerHTML = '';
+        const nameWrap = document.createElement('div');
+        nameWrap.innerHTML = '<label>Install as (bundle name)</label>';
+        const nameInput = document.createElement('input');
+        nameInput.id = 'llmCatName'; nameInput.value = id;
+        nameWrap.appendChild(nameInput);
+        detail.appendChild(nameWrap);
+
+        const selectors = []; // {role, required, getChoice}
+        data.components.forEach((c) => {
+          const box = document.createElement('div');
+          box.style.cssText = 'border-top:1px solid var(--border);margin-top:12px;padding-top:10px;';
+          box.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:6px;">' + c.label +
+            ' <span class="pill">' + c.role + '</span>' + (c.required ? '' : ' <span style="color:var(--muted);font-size:11px">optional</span>') + '</div>';
+
+          if (!c.files || c.files.length === 0) {
+            box.innerHTML += '<div style="color:var(--danger);font-size:12px;">Unavailable: ' + (c.error || 'no files found') + '</div>';
+            detail.appendChild(box);
+            selectors.push({ role: c.role, required: c.required, getChoice: () => null });
+            return;
+          }
+
+          const fileSel = document.createElement('select');
+          c.files.forEach((file, i) => {
+            const o = document.createElement('option');
+            o.value = i;
+            o.textContent = (file.quant || file.filename) + ' · ' + fmtSize(file.size);
+            fileSel.appendChild(o);
+          });
+          const qc = document.createElement('div'); qc.innerHTML = '<label>' + (c.quantizable ? 'Quantization' : 'File') + '</label>'; qc.appendChild(fileSel);
+          box.appendChild(qc);
+          detail.appendChild(box);
+          selectors.push({ role: c.role, required: c.required, getChoice: () => c.files[Number(fileSel.value)] || null });
+        });
+
+        const installBtn = document.createElement('button');
+        installBtn.className = 'primary'; installBtn.textContent = 'Download & install';
+        installBtn.onclick = () => installLlmCatalogModel(model, nameInput.value.trim(), selectors, installBtn);
+        detail.appendChild(installBtn);
+
+        const status = document.createElement('div');
+        status.id = 'llmCatStatus'; status.style.cssText = 'margin-top:10px;font-size:12px;color:var(--muted);';
+        detail.appendChild(status);
+      }
+
+      async function installLlmCatalogModel(model, name, selectors, btn) {
+        if (!name) { toast('Enter a bundle name', true); return; }
+        const chosen = selectors.map((s) => ({ ...s, file: s.getChoice() })).filter((s) => s.file);
+        const missingRequired = selectors.filter((s) => s.required && !s.getChoice());
+        if (missingRequired.length) { toast('Missing files for: ' + missingRequired.map((s) => s.role).join(', '), true); return; }
+
+        btn.disabled = true;
+        const status = $('llmCatStatus');
+        try {
+          status.textContent = 'Writing sidecar…';
+          await api('/v1/llm-models/' + encodeURIComponent(name) + '/manifest', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: model.name }),
+          });
+
+          const ids = [];
+          for (const s of chosen) {
+            const task = await api('/v1/llm-models/download', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ model: name, type: s.role, url: s.file.url, name: s.file.filename }),
+            });
+            ids.push(task.id);
+          }
+          toast('Queued ' + ids.length + ' download(s) for ' + name);
+          ensureLlmDownloadPolling();
+          pollLlmCatalogInstall(name, ids, status, btn);
+        } catch (e) {
+          status.textContent = '';
+          toast('Install failed: ' + e.message, true);
+          btn.disabled = false;
+        }
+      }
+
+      async function pollLlmCatalogInstall(model, ids, status, btn) {
+        const tick = async () => {
+          let tasks;
+          try { tasks = (await api('/v1/llm-downloads?model=' + encodeURIComponent(model))).downloads.filter((t) => ids.includes(t.id)); }
+          catch { return setTimeout(tick, 1500); }
+          status.innerHTML = '';
+          tasks.forEach((t) => {
+            const d = document.createElement('div');
+            d.style.cssText = 'margin-bottom:6px;';
+            const pct = t.total ? Math.round((t.received / t.total) * 100) + '%' : fmtSize(t.received);
+            d.innerHTML = '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>' + t.name + '</span><span>' + t.status + ' · ' + pct + '</span></div>' +
+              ((t.status === 'downloading' || t.status === 'queued') ? progressBarHtml(t.received, t.total) : '') +
+              (t.error ? '<div style="color:var(--danger);font-size:11px;">' + t.error + '</div>' : '');
+            status.appendChild(d);
+          });
+          const done = tasks.length > 0 && tasks.every((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
+          if (!done) { setTimeout(tick, 1200); return; }
+          btn.disabled = false;
+          const failed = tasks.filter((t) => t.status !== 'completed');
+          if (failed.length === 0) toast('Installed ' + model);
+          else toast(failed.length + ' download(s) failed — resume from the LLM Models tab', true);
+          loadLlmModels();
+        };
+        tick();
+      }
+
+      $('refreshLlmCatalog').addEventListener('click', loadLlmCatalog);
+
       // ---- Init ----
       fillSamplers();
       checkHealth();
       loadCheckpoints();
+      loadLlmModels(); // populates the Chat model datalist too
       setInterval(checkHealth, 15000);
     </script>
   </body>

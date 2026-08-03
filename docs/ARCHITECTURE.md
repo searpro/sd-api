@@ -17,8 +17,10 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
   the global error handler, constructs services, decorates them, and registers
   route plugins.
 - **Services** (constructed once, shared): `SdWrapper`, `ModelManager`,
-  `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`.
-  Augmented onto `FastifyInstance` in `src/types.ts`.
+  `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`,
+  `LlmModelManager`, a second `DownloadManager<LlmComponentType>` instance
+  (`app.llmDownloads`), `LlmCatalogManager`. Augmented onto `FastifyInstance`
+  in `src/types.ts`.
 
 ## Request → image lifecycle
 
@@ -76,18 +78,43 @@ streams to `<file>.part` with a `<file>.part.json` sidecar (url + total).
 (206); a `200` means the server ignored the range → clean restart; `416` with a
 full `.part` → promote to final. The `.part` becomes the final filename only on
 success. Tasks: `queued|downloading|completed|failed|cancelled`; cancel keeps
-the partial; `retry`/`resume` continue it. `ModelManager.resolveComponentPaths`
-provides the on-disk targets.
+the partial; `retry`/`resume` continue it.
 
-## Catalog (`src/catalog/`)
+`DownloadManager<TType extends string = ComponentType>` is generic over a
+`ComponentPathResolver<TType>` (`src/downloads/resolver.ts` —
+`resolveComponentPaths()` + `fileNameFor()`) rather than a concrete
+`ModelManager`, so the same tested resume/progress/cancel implementation
+serves two independent domains: `ModelManager implements
+ComponentPathResolver<ComponentType>` (image models, `checkpoint/vae/clip/lora`
+sub-dirs) and `LlmModelManager implements ComponentPathResolver<LlmComponentType>`
+(LLM models, flat layout, `.gguf`-only `ALLOWED_EXT`). `server.ts` constructs
+**two separate `DownloadManager` instances** (`app.downloads`,
+`app.llmDownloads`) rather than merging both `type` unions into one class —
+keeps each domain's API contract (and `ALLOWED_EXT`) from leaking into the
+other's.
 
-`data.ts` is a curated `CatalogModel[]` (txt2img + edit models). `manager.ts`
-returns summaries (`list()`), full entries (`get()`), and **live** per-component
-file/quant options (`files()`) by querying the HuggingFace tree API in
-`hf.ts` (cached 10 min; `parseQuant()` extracts the quant token; `resolveUrl()`
-builds the download URL). Install (UI): write `model.json` manifest →
-enqueue a download per chosen component. See the deferred plan to externalize
-this list: `/root/.claude/plans/i-want-to-pull-federated-pixel.md`.
+## Catalog (`src/catalog/`, `src/llm-catalog/`)
+
+`catalog/data.ts` is a curated `CatalogModel[]` (txt2img + edit image models).
+`catalog/manager.ts` returns summaries (`list()`), full entries (`get()`), and
+**live** per-component file/quant options (`files()`) by querying the
+HuggingFace tree API in `catalog/hf.ts` (cached 10 min; `parseQuant()`
+extracts the quant token — recognizes both SD-style `Q4_K_M`/`BF16` and
+llama.cpp's `IQ*` imatrix naming like `IQ4_XS`; `resolveUrl()` builds the
+download URL). Install (UI): write `model.json` manifest → enqueue a download
+per chosen component.
+
+`llm-catalog/` is a parallel, simpler catalog for LLMs (`data.ts` curates
+< 30B-param models across Llama/Qwen/Mistral/Gemma/Phi/DeepSeek-R1-distill
+families, sourced primarily from bartowski's and ggml-org's GGUF conversions
+— repo ids verified to exist against the real HF API, not memorized) —
+**reuses `catalog/hf.ts`'s `listComponentFiles()` unchanged**, since it's
+already generic over repo/path/match/format. The one LLM-specific wrinkle:
+a `gguf` (weights) component's HF source has no `match` filter, so without
+correction it would also surface the same repo's `mmproj-*.gguf`
+vision-projector files as bogus weights options — `LlmCatalogManager.files()`
+filters those out via `isMmproj()` (`llm-models/bundle.ts`) for `role ===
+'gguf'` responses.
 
 ## HuggingFace auth (`src/util/hf-auth.ts`)
 

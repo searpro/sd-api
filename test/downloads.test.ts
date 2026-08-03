@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { DownloadManager } from '../src/downloads/manager.js';
 import { ModelManager } from '../src/models/manager.js';
+import { LlmModelManager, type LlmComponentType } from '../src/llm-models/manager.js';
 import { makeTestConfig } from './helpers.js';
 
 const log = { info() {}, warn() {}, debug() {}, error() {} } as never;
@@ -130,5 +131,33 @@ describe('DownloadManager', () => {
     // The bundle reports the partial as resumable.
     const bundle = await models.get('m3');
     expect(bundle?.partials.find((p) => p.name === 'z.gguf')).toBeTruthy();
+  });
+});
+
+describe('DownloadManager<LlmComponentType> (generalization via ComponentPathResolver)', () => {
+  it('downloads an LLM component through LlmModelManager, same class as the SD side', async () => {
+    slow = false;
+    const config = await makeTestConfig();
+    const llmModels = new LlmModelManager(config, log);
+    const dl = new DownloadManager<LlmComponentType>(config, llmModels, log);
+
+    const task = dl.enqueue({ model: 'qwen3-8b', type: 'gguf', url: `${base}/w.gguf`, name: 'w.gguf' });
+    await waitFor(() => task.status === 'completed');
+    expect(task.total).toBe(SIZE);
+
+    const final = join(config.llmModelsDir, 'qwen3-8b', 'w.gguf');
+    expect((await stat(final)).size).toBe(SIZE);
+    expect(Buffer.compare(await readFile(final), PAYLOAD)).toBe(0);
+
+    const bundle = await llmModels.get('qwen3-8b');
+    expect(bundle?.ready).toBe(true);
+    expect(bundle?.weights?.name).toBe('w.gguf');
+  });
+
+  it('rejects a non-.gguf filename via the LLM resolver’s own ALLOWED_EXT', async () => {
+    const config = await makeTestConfig();
+    const llmModels = new LlmModelManager(config, log);
+    const dl = new DownloadManager<LlmComponentType>(config, llmModels, log);
+    expect(() => dl.enqueue({ model: 'x', type: 'gguf', url: `${base}/x.safetensors` })).toThrow();
   });
 });

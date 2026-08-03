@@ -6,16 +6,17 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
-import { ModelManager, type ComponentType } from '../models/manager.js';
+import type { ComponentType } from '../models/manager.js';
+import type { ComponentPathResolver } from './resolver.js';
 import { errors, AppError } from '../errors.js';
 import { hfAuthHeaders, isHuggingFaceUrl, gatedHint } from '../util/hf-auth.js';
 
 export type DownloadStatus = 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled';
 
-export interface DownloadTask {
+export interface DownloadTask<TType extends string = ComponentType> {
   id: string;
   model: string;
-  type: ComponentType;
+  type: TType;
   name: string;
   url: string;
   status: DownloadStatus;
@@ -30,11 +31,11 @@ export interface DownloadTask {
   updatedAt: string;
 }
 
-interface SidecarMeta {
+interface SidecarMeta<TType extends string> {
   url: string;
   total: number | null;
   model: string;
-  type: ComponentType;
+  type: TType;
   name: string;
 }
 
@@ -49,8 +50,8 @@ const PROGRESS_INTERVAL_MS = 400;
  *   `.part` file. A `.part.json` sidecar stores the source URL + total so a
  *   download can be resumed even after a server restart.
  */
-export class DownloadManager {
-  private readonly tasks = new Map<string, DownloadTask>();
+export class DownloadManager<TType extends string = ComponentType> {
+  private readonly tasks = new Map<string, DownloadTask<TType>>();
   private readonly emitters = new Map<string, EventEmitter>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly byKey = new Map<string, string>(); // model/type/name -> task id
@@ -59,17 +60,17 @@ export class DownloadManager {
 
   constructor(
     private readonly config: Config,
-    private readonly models: ModelManager,
+    private readonly resolver: ComponentPathResolver<TType>,
     private readonly log: FastifyBaseLogger,
   ) {}
 
-  private key(model: string, type: ComponentType, name: string): string {
+  private key(model: string, type: TType, name: string): string {
     return `${model}/${type}/${name}`;
   }
 
   /** Enqueue a download (or return the existing active task for the same file). */
-  enqueue(input: { model: string; type: ComponentType; url: string; name?: string }): DownloadTask {
-    const name = ModelManager.fileNameFor(input.url, input.name);
+  enqueue(input: { model: string; type: TType; url: string; name?: string }): DownloadTask<TType> {
+    const name = this.resolver.fileNameFor(input.url, input.name);
     const key = this.key(input.model, input.type, name);
 
     const existingId = this.byKey.get(key);
@@ -82,7 +83,7 @@ export class DownloadManager {
 
     const id = randomUUID();
     const now = new Date().toISOString();
-    const task: DownloadTask = {
+    const task: DownloadTask<TType> = {
       id,
       model: input.model,
       type: input.type,
@@ -105,20 +106,20 @@ export class DownloadManager {
   }
 
   /** Retry a failed/cancelled task (resumes from its existing .part). */
-  retry(id: string): DownloadTask | null {
+  retry(id: string): DownloadTask<TType> | null {
     const task = this.tasks.get(id);
     if (!task) return null;
     if (task.status === 'downloading' || task.status === 'queued') return task;
     return this.enqueue({ model: task.model, type: task.type, url: task.url, name: task.name });
   }
 
-  list(model?: string): DownloadTask[] {
+  list(model?: string): DownloadTask<TType>[] {
     const all = [...this.tasks.values()];
     const filtered = model ? all.filter((t) => t.model === model) : all;
     return filtered.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
-  get(id: string): DownloadTask | undefined {
+  get(id: string): DownloadTask<TType> | undefined {
     return this.tasks.get(id);
   }
 
@@ -145,7 +146,7 @@ export class DownloadManager {
     if (!task) return false;
     if (task.status === 'downloading') this.controllers.get(id)?.abort();
     if (discardPartial) {
-      const p = await this.models.resolveComponentPaths(task.model, task.type, task.name);
+      const p = await this.resolver.resolveComponentPaths(task.model, task.type, task.name);
       await unlink(p.tmpPath).catch(() => {});
       await unlink(p.metaPath).catch(() => {});
     }
@@ -177,18 +178,18 @@ export class DownloadManager {
     }
   }
 
-  private touch(task: DownloadTask): void {
+  private touch(task: DownloadTask<TType>): void {
     task.updatedAt = new Date().toISOString();
   }
 
-  private settle(task: DownloadTask, status: DownloadStatus, error?: string): void {
+  private settle(task: DownloadTask<TType>, status: DownloadStatus, error?: string): void {
     task.status = status;
     if (error) task.error = error;
     this.touch(task);
     this.emitters.get(task.id)?.emit('done', { ...task });
   }
 
-  private async run(task: DownloadTask): Promise<void> {
+  private async run(task: DownloadTask<TType>): Promise<void> {
     this.active++;
     task.status = 'downloading';
     this.touch(task);
@@ -216,8 +217,8 @@ export class DownloadManager {
     }
   }
 
-  private async download(task: DownloadTask, signal: AbortSignal): Promise<void> {
-    const paths = await this.models.resolveComponentPaths(task.model, task.type, task.name);
+  private async download(task: DownloadTask<TType>, signal: AbortSignal): Promise<void> {
+    const paths = await this.resolver.resolveComponentPaths(task.model, task.type, task.name);
 
     // How much is already on disk?
     let offset = 0;
@@ -266,7 +267,7 @@ export class DownloadManager {
     this.touch(task);
 
     // Persist resume metadata.
-    const meta: SidecarMeta = {
+    const meta: SidecarMeta<TType> = {
       url: task.url,
       total,
       model: task.model,
@@ -305,11 +306,11 @@ export class DownloadManager {
   }
 
   /** Resume a partial download discovered on disk (uses its sidecar URL). */
-  async resumePartial(model: string, type: ComponentType, name: string): Promise<DownloadTask> {
-    const paths = await this.models.resolveComponentPaths(model, type, name);
+  async resumePartial(model: string, type: TType, name: string): Promise<DownloadTask<TType>> {
+    const paths = await this.resolver.resolveComponentPaths(model, type, name);
     let url: string;
     try {
-      const meta = JSON.parse(await readFile(paths.metaPath, 'utf8')) as SidecarMeta;
+      const meta = JSON.parse(await readFile(paths.metaPath, 'utf8')) as SidecarMeta<TType>;
       url = meta.url;
     } catch {
       throw errors.downloadFailed(

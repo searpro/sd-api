@@ -18,6 +18,8 @@ import { JobManager } from './jobs/manager.js';
 import { CatalogManager } from './catalog/manager.js';
 import { DownloadManager } from './downloads/manager.js';
 import { LlamaServerManager } from './llm/server-manager.js';
+import { LlmModelManager, type LlmComponentType } from './llm-models/manager.js';
+import { LlmCatalogManager } from './llm-catalog/manager.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
@@ -29,6 +31,9 @@ import { jobRoutes } from './routes/jobs.js';
 import { outputRoutes } from './routes/outputs.js';
 import { inputRoutes } from './routes/inputs.js';
 import { llmRoutes } from './routes/llm.js';
+import { llmModelRoutes } from './routes/llm-models.js';
+import { llmDownloadRoutes } from './routes/llm-downloads.js';
+import { llmCatalogRoutes } from './routes/llm-catalog.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
@@ -51,6 +56,9 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   const catalog = new CatalogManager(app.log);
   const downloads = new DownloadManager(config, models, app.log);
   const llm = new LlamaServerManager(config, app.log);
+  const llmModels = new LlmModelManager(config, app.log);
+  const llmDownloads = new DownloadManager<LlmComponentType>(config, llmModels, app.log);
+  const llmCatalog = new LlmCatalogManager(app.log);
   app.decorate('config', config);
   app.decorate('sd', sd);
   app.decorate('models', models);
@@ -58,6 +66,9 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   app.decorate('catalog', catalog);
   app.decorate('downloads', downloads);
   app.decorate('llm', llm);
+  app.decorate('llmModels', llmModels);
+  app.decorate('llmDownloads', llmDownloads);
+  app.decorate('llmCatalog', llmCatalog);
 
   // OpenAPI 3.1 docs (Phase 8).
   await app.register(fastifySwagger, {
@@ -78,7 +89,12 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         { name: 'inputs', description: 'Input images for img2img / editing' },
         { name: 'outputs', description: 'Generated images' },
         { name: 'auth', description: 'HuggingFace authentication' },
-        { name: 'llm', description: 'OpenAI-compatible LLM chat/completions (llama.cpp)' },
+        {
+          name: 'llm',
+          description:
+            'LLM serving (llama.cpp): OpenAI-compatible chat/completions (/v1/llm/*), plus our own ' +
+            'model management (/v1/llm-models) and catalog (/v1/llm-catalog)',
+        },
         { name: 'system', description: 'Health & meta' },
       ],
     },
@@ -128,6 +144,9 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(jobRoutes);
   await app.register(outputRoutes);
   await app.register(llmRoutes);
+  await app.register(llmModelRoutes);
+  await app.register(llmDownloadRoutes);
+  await app.register(llmCatalogRoutes);
 
   // Thin web UI (static, no build step). Served at "/"; API routes above take
   // precedence over the static wildcard. public/ sits next to src/ and dist/.
@@ -139,6 +158,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
 
   // Ensure runtime directories exist.
   await models.init();
+  await llmModels.init();
 
   return app;
 }

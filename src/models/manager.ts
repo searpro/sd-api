@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import { safeResolve, assertSafeName } from '../util/paths.js';
 import { errors } from '../errors.js';
+import type { ComponentPathResolver, ComponentPaths } from '../downloads/resolver.js';
 import {
   SUBDIRS,
   type ComponentType,
@@ -15,18 +16,9 @@ import {
 export const ALLOWED_EXT = new Set(['.gguf', '.safetensors', '.ckpt', '.pt', '.bin']);
 
 export type { ComponentType, BundleInfo } from './bundle.js';
+export type { ComponentPaths } from '../downloads/resolver.js';
 
-/** Resolved on-disk paths for a model component download. */
-export interface ComponentPaths {
-  dir: string;
-  finalPath: string;
-  /** Partial-download file (resume target). */
-  tmpPath: string;
-  /** Sidecar JSON holding resume metadata (url, total). */
-  metaPath: string;
-}
-
-export class ModelManager {
+export class ModelManager implements ComponentPathResolver<ComponentType> {
   constructor(
     private readonly config: Config,
     private readonly log: FastifyBaseLogger,
@@ -159,6 +151,11 @@ export class ModelManager {
       );
     }
     return name;
+  }
+
+  /** Instance form for `ComponentPathResolver` (DownloadManager calls this generically). */
+  fileNameFor(url: string, explicit?: string): string {
+    return ModelManager.fileNameFor(url, explicit);
   }
 
   /** Resolve (and create) the on-disk paths for a component download. */
