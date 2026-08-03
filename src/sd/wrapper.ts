@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { resolve, join, delimiter, dirname } from 'node:path';
+import { resolve, join, delimiter } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
 import type { GenerateParams } from '../schemas/generate.js';
@@ -13,6 +13,7 @@ import { SdInstaller } from './installer.js';
 import { resolveBundle } from '../models/bundle.js';
 import { safeResolve } from '../util/paths.js';
 import { uniqueImageName } from '../util/filename.js';
+import { spawnEnv } from '../util/spawn-env.js';
 import { errors, AppError } from '../errors.js';
 
 export interface GenerateResult {
@@ -172,32 +173,6 @@ export class SdWrapper extends EventEmitter {
     return this.run(args, outputPath, imageName, effective, { onProgress, onLog, signal });
   }
 
-  /**
-   * Build the child environment, adding the binary's own directory to the
-   * dynamic-library search path. Prebuilt releases ship the CLI next to its
-   * shared library (e.g. libstable-diffusion.so) but their RUNPATH points at
-   * the build machine, so we must help the loader find the sibling lib.
-   */
-  private spawnEnv(binaryPath: string): NodeJS.ProcessEnv {
-    if (!binaryPath.includes('/') && !binaryPath.includes('\\')) {
-      // Bare command resolved via PATH — assume libs are already discoverable.
-      return process.env;
-    }
-    const binDir = dirname(resolve(binaryPath));
-    const env = { ...process.env };
-    const prepend = (key: string) => {
-      env[key] = env[key] ? `${binDir}${delimiter}${env[key]}` : binDir;
-    };
-    if (process.platform === 'darwin') {
-      prepend('DYLD_LIBRARY_PATH');
-      prepend('DYLD_FALLBACK_LIBRARY_PATH');
-    } else if (process.platform === 'win32') {
-      prepend('PATH'); // Windows resolves DLLs from PATH (and the exe dir).
-    } else {
-      prepend('LD_LIBRARY_PATH');
-    }
-    return env;
-  }
 
   private run(
     args: string[],
@@ -213,7 +188,7 @@ export class SdWrapper extends EventEmitter {
     return new Promise<GenerateResult>((resolvePromise, reject) => {
       const child = spawn(sdBinaryPath, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: this.spawnEnv(sdBinaryPath),
+        env: spawnEnv(sdBinaryPath),
       });
 
       let settled = false;

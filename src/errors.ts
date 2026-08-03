@@ -19,6 +19,10 @@ export type ErrorCode =
   | 'INPUT_NOT_FOUND'
   | 'INVALID_PATH'
   | 'DOWNLOAD_FAILED'
+  | 'LLM_BINARY_NOT_FOUND'
+  | 'LLM_STARTUP_FAILED'
+  | 'LLM_SERVER_UNAVAILABLE'
+  | 'LLM_UPSTREAM_ERROR'
   | 'INTERNAL_ERROR';
 
 export class AppError extends Error {
@@ -63,5 +67,10 @@ export const errors = {
   processTimeout: (ms: number) =>
     new AppError('PROCESS_TIMEOUT', `Generation process exceeded timeout of ${ms}ms`, 504),
   downloadFailed: (msg: string) => new AppError('DOWNLOAD_FAILED', msg, 502),
+  llmBinaryNotFound: (path: string) =>
+    new AppError('LLM_BINARY_NOT_FOUND', `llama-server binary not found: ${path}`, 500),
+  llmStartupFailed: (msg: string) => new AppError('LLM_STARTUP_FAILED', msg, 500),
+  llmServerUnavailable: (msg: string) => new AppError('LLM_SERVER_UNAVAILABLE', msg, 502),
+  llmUpstreamError: (msg: string) => new AppError('LLM_UPSTREAM_ERROR', msg, 502),
   internal: (msg: string) => new AppError('INTERNAL_ERROR', msg, 500),
 };
