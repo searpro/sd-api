@@ -5,6 +5,8 @@ import type { JobManager } from './jobs/manager.js';
 import type { CatalogManager } from './catalog/manager.js';
 import type { DownloadManager } from './downloads/manager.js';
 import type { LlamaServerManager } from './llm/server-manager.js';
+import type { LlmModelManager, LlmComponentType } from './llm-models/manager.js';
+import type { LlmCatalogManager } from './llm-catalog/manager.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -15,5 +17,8 @@ declare module 'fastify' {
     catalog: CatalogManager;
     downloads: DownloadManager;
     llm: LlamaServerManager;
+    llmModels: LlmModelManager;
+    llmDownloads: DownloadManager<LlmComponentType>;
+    llmCatalog: LlmCatalogManager;
   }
 }

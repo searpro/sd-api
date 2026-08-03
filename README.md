@@ -24,6 +24,8 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | HF auth | Token (env) for gated/private models + verify | `GET /v1/auth/hf` |
 | LoRA | Per-model LoRAs, prompt-activated `<lora:name:1>` | `type: lora` |
 | LLM | OpenAI-compatible LLM/VLM serving via llama.cpp, streaming | `POST /v1/llm/chat/completions` |
+| LLM catalog | Guided LLM downloads (curated GGUF models, < 30B) | `GET /v1/llm-catalog` |
+| LLM models | LLM bundle management + background downloads | `GET /v1/llm-models` |
 
 ## Prerequisites
 
@@ -330,11 +332,11 @@ way an OpenAI-compatible client already expects. sd-api reverse-proxies
 `/v1/llm/*` to it byte-for-byte (streaming and non-streaming alike), so any
 OpenAI SDK client works unmodified by pointing `base_url` at `.../v1/llm`.
 
-> **Phase 1 status**: model placement is manual (drop a GGUF file/directory
-> under the LLM models directory) — a download catalog and model-management UI
-> for LLMs, matching the image side, are planned for a future update. The
-> **Chat** sub-tab under the web UI's **LLM** tab works today; **Models** and
-> **Catalog** sub-tabs are placeholders.
+A curated **catalog** of popular GGUF-quantized LLMs (< 30B params, including
+several vision-language models) is browsable and installable straight from the
+UI or API — same guided-download flow as the image-model catalog, resolving
+real files/quantizations live from HuggingFace. LoRA/preset/restart-policy
+support for `llama-server` remain future work.
 
 ### Quick start
 
@@ -408,8 +410,56 @@ All strictly OpenAI-shaped and proxied to `llama-server` unmodified:
 | `GET /v1/llm/models` | Lists models discovered by `llama-server` |
 
 `/v1/llm/*` is reserved exclusively for this OpenAI-compatible surface — our
-own LLM bundle/catalog management (future work) will live at flat siblings
-like `/v1/llm-models`, not nested under `/v1/llm/`.
+own LLM bundle/catalog management lives at the flat siblings below, not
+nested under `/v1/llm/`.
+
+### Model management (`/v1/llm-models`)
+
+Each LLM model is a flat bundle directory — no checkpoint/vae/clip split like
+the image side, since llama.cpp doesn't need one:
+
+```
+<llmModelsDir>/
+  qwen3-8b/
+    model.json               # optional sidecar (display name only)
+    Qwen_Qwen3-8B-Q4_K_M.gguf
+  gemma-3-4b-it/
+    google_gemma-3-4b-it-Q4_K_M.gguf
+    mmproj-google_gemma-3-4b-it-f16.gguf   # vision projector (VLM)
+```
+
+```bash
+curl localhost:3000/v1/llm-models                 # list installed bundles
+curl -X POST localhost:3000/v1/llm-models \
+  -d '{"model":"qwen3-8b"}' -H 'content-type: application/json'
+curl -X POST localhost:3000/v1/llm-models/download -H 'content-type: application/json' \
+  -d '{"model":"qwen3-8b","type":"gguf","url":"https://.../Qwen_Qwen3-8B-Q4_K_M.gguf"}'
+curl -X DELETE localhost:3000/v1/llm-models/qwen3-8b
+```
+
+Downloads run through the same background download engine as the image side
+(progress, resume, cancel) via `/v1/llm-downloads` — `DownloadManager` was
+generalized to a `ComponentPathResolver<TType>` interface so both domains
+share one tested implementation (see `docs/ARCHITECTURE.md`).
+
+### Model catalog (`/v1/llm-catalog`)
+
+A curated catalog of popular open-weight LLMs under 30B params
+([`src/llm-catalog/data.ts`](src/llm-catalog/data.ts)) — Llama, Qwen, Mistral,
+Gemma, Phi, DeepSeek-R1-distill, plus vision-language models (Gemma 3,
+Qwen2.5-VL, SmolVLM2). Like the image catalog, only repo ids are hardcoded;
+the actual quantization files are resolved **live** via the HuggingFace Hub
+API (shared `src/catalog/hf.ts`, extended to also recognize llama.cpp's `IQ*`
+imatrix quant naming).
+
+```bash
+curl localhost:3000/v1/llm-catalog                        # curated models
+curl localhost:3000/v1/llm-catalog/qwen3-8b/files         # live quant options (HF)
+```
+
+The web UI's **LLM → Catalog** sub-tab drives the same install flow as the
+image Catalog tab: pick a model → pick a quantization per component → writes
+`model.json` then enqueues the download(s).
 
 ### Configuration
 
@@ -547,11 +597,14 @@ src/
   sd/               # CLI wrapper, arg mapping, progress parsing,
                     #   release selection + auto-installer
   models/           # bundle resolver + model manager (list/delete/paths)
-  downloads/        # background download manager (progress + resume)
+  downloads/        # generic background download manager (progress + resume)
+                    #   + ComponentPathResolver interface (resolver.ts)
   catalog/          # curated model catalog + HuggingFace file listing
   jobs/             # in-memory job queue + manager
   llm/              # llama-server process manager, arg mapping, installer
-  routes/           # generate, jobs, models, outputs, health, llm
+  llm-models/       # LLM bundle resolver + manager (flat <id>/ layout)
+  llm-catalog/      # curated LLM catalog (reuses catalog/hf.ts)
+  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog
   util/             # path safety, filename, validation
 public/             # thin web UI (single static index.html, no build step)
 test/               # vitest unit + integration tests (uses fake `sd`/`llama-server` binaries)
@@ -576,6 +629,6 @@ ControlNet, persistent job/download store, GPU scheduling, distributed workers,
 video models (Wan, LTX-2.3), externalized catalog (designed, deferred),
 HuggingFace OAuth in the UI (Phase 2 of HF auth — token-from-env ships today).
 
-LLM serving is Phase 1 only (see above): model management (`/v1/llm-models`),
-a downloadable catalog (`/v1/llm-catalog`), image-attach in the Chat UI, and
-LoRA/restart-policy/preset support for `llama-server` are planned follow-ups.
+LLM serving: model management and a downloadable catalog now ship (see
+above); image-attach in the Chat UI and LoRA/restart-policy/preset support
+for `llama-server` remain planned follow-ups.

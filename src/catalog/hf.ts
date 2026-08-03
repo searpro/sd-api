@@ -34,7 +34,7 @@ export function resolveUrl(repo: string, path: string): string {
 }
 
 const QUANT_RE =
-  /(?<![a-z0-9])(bf16|fp16|fp8(?:_e4m3fn|_scaled)?|f16|f32|q\d+_k_[sml]|q\d+_k|q\d+_[0-9])(?![a-z0-9])/i;
+  /(?<![a-z0-9])(bf16|fp16|fp8(?:_e4m3fn|_scaled)?|f16|f32|iq\d+_(?:xxs|xs|s|m|nl)|q\d+_k_[sml]|q\d+_k|q\d+_[0-9])(?![a-z0-9])/i;
 
 /** Parse the quantization / precision token out of a weight filename. */
 export function parseQuant(filename: string): string | null {
