@@ -62,6 +62,8 @@ export class DownloadManager<TType extends string = ComponentType> {
     private readonly config: Config,
     private readonly resolver: ComponentPathResolver<TType>,
     private readonly log: FastifyBaseLogger,
+    /** Optional hook fired with the final task whenever a download settles (completed/failed/cancelled). */
+    private readonly onSettle?: (task: DownloadTask<TType>) => void,
   ) {}
 
   private key(model: string, type: TType, name: string): string {
@@ -187,6 +189,7 @@ export class DownloadManager<TType extends string = ComponentType> {
     if (error) task.error = error;
     this.touch(task);
     this.emitters.get(task.id)?.emit('done', { ...task });
+    this.onSettle?.({ ...task });
   }
 
   private async run(task: DownloadTask<TType>): Promise<void> {

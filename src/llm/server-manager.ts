@@ -15,6 +15,9 @@ export type LlamaServerStatus = 'stopped' | 'starting' | 'ready' | 'unhealthy' |
 
 const HEALTH_POLL_INTERVAL_MS = 300;
 const STOP_GRACE_MS = 5000;
+// Coalesces restarts triggered by multiple near-simultaneous component
+// downloads (e.g. checkpoint + mmproj for the same model) into one restart.
+const RESTART_DEBOUNCE_MS = 3000;
 
 /**
  * Supervises a single, long-running `llama-server` process (router mode — no
@@ -30,6 +33,7 @@ export class LlamaServerManager extends EventEmitter {
   private stderrTail: string[] = [];
   private stopping = false;
   private startPromise: Promise<void> | null = null;
+  private restartTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: Config,
@@ -120,6 +124,41 @@ export class LlamaServerManager extends EventEmitter {
   async ensureRunning(signal?: AbortSignal): Promise<void> {
     if (this._status === 'ready') return;
     return this.start(signal);
+  }
+
+  /**
+   * Stop then start llama-server, so a fresh `--models-dir` scan picks up
+   * models that were added (downloaded) after it was already running — it
+   * only discovers models at startup, never live.
+   */
+  async restart(signal?: AbortSignal): Promise<void> {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+    await this.stop();
+    await this.start(signal);
+  }
+
+  /**
+   * Debounced restart: call after an LLM model download completes so the
+   * router picks it up without a manual process restart. Multiple calls
+   * within the debounce window (e.g. a checkpoint + mmproj for the same
+   * model finishing close together) collapse into a single restart.
+   * Non-throwing — failures are logged, since this runs off the request path.
+   */
+  scheduleRestart(delayMs = RESTART_DEBOUNCE_MS): void {
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      this.restart().catch((err) => {
+        this.log.warn(
+          { err: (err as Error).message },
+          'auto-restart of llama-server failed after model download',
+        );
+      });
+    }, delayMs);
+    this.restartTimer.unref();
   }
 
   /**
@@ -234,6 +273,10 @@ export class LlamaServerManager extends EventEmitter {
 
   /** Stop the server (SIGTERM, then SIGKILL after a grace period). No-op if not running. */
   async stop(): Promise<void> {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     const child = this.child;
     if (!child) {
       this._status = 'stopped';

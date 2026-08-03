@@ -57,7 +57,12 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   const downloads = new DownloadManager(config, models, app.log);
   const llm = new LlamaServerManager(config, app.log);
   const llmModels = new LlmModelManager(config, app.log);
-  const llmDownloads = new DownloadManager<LlmComponentType>(config, llmModels, app.log);
+  // llama-server only discovers models from --models-dir at startup, so a
+  // model downloaded while it's already running is otherwise invisible to it
+  // until a manual restart — auto-restart (debounced) once a download lands.
+  const llmDownloads = new DownloadManager<LlmComponentType>(config, llmModels, app.log, (task) => {
+    if (task.status === 'completed') llm.scheduleRestart();
+  });
   const llmCatalog = new LlmCatalogManager(app.log);
   app.decorate('config', config);
   app.decorate('sd', sd);

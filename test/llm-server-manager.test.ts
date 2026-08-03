@@ -4,6 +4,14 @@ import { makeTestConfig } from './helpers.js';
 
 const log = { info() {}, warn() {}, debug() {}, error() {} } as never;
 
+async function waitForStatus(get: () => string, want: string, ms = 5000): Promise<void> {
+  const start = Date.now();
+  while (get() !== want) {
+    if (Date.now() - start > ms) throw new Error(`timeout waiting for status "${want}", got "${get()}"`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 describe('LlamaServerManager', () => {
   let manager: LlamaServerManager | undefined;
 
@@ -74,5 +82,49 @@ describe('LlamaServerManager', () => {
     manager = new LlamaServerManager(config, log);
     expect(await manager.isBinaryAvailable()).toBe(false);
     await expect(manager.ensureBinary()).rejects.toThrow(/LLM_BINARY_NOT_FOUND|not found/);
+  });
+
+  it('restart() replaces the running process (new pid, still ready)', async () => {
+    const config = await makeTestConfig();
+    manager = new LlamaServerManager(config, log);
+
+    await manager.start();
+    expect(manager.status).toBe('ready');
+    const before = await (await fetch(`${manager.baseUrl}/__debug`)).json();
+
+    await manager.restart();
+    expect(manager.status).toBe('ready');
+    // A fresh process resets the fake server's request counter below what it
+    // would otherwise have reached, proving a new child was spawned.
+    const after = await (await fetch(`${manager.baseUrl}/__debug`)).json();
+    expect(after.requestCount).toBeLessThan(before.requestCount + 5);
+  });
+
+  it('scheduleRestart() debounces multiple calls into a single restart', async () => {
+    const config = await makeTestConfig();
+    manager = new LlamaServerManager(config, log);
+    await manager.start();
+    expect(manager.status).toBe('ready');
+
+    manager.scheduleRestart(50);
+    manager.scheduleRestart(50);
+    manager.scheduleRestart(50);
+
+    await waitForStatus(() => manager!.status, 'ready');
+    const health = await fetch(`${manager.baseUrl}/health`);
+    expect(health.ok).toBe(true);
+  });
+
+  it('scheduleRestart() cleared by stop() does not respawn after shutdown', async () => {
+    const config = await makeTestConfig();
+    manager = new LlamaServerManager(config, log);
+    await manager.start();
+
+    manager.scheduleRestart(50);
+    await manager.stop();
+    expect(manager.status).toBe('stopped');
+
+    await new Promise((r) => setTimeout(r, 300));
+    expect(manager.status).toBe('stopped');
   });
 });

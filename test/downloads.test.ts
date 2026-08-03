@@ -160,4 +160,19 @@ describe('DownloadManager<LlmComponentType> (generalization via ComponentPathRes
     const dl = new DownloadManager<LlmComponentType>(config, llmModels, log);
     expect(() => dl.enqueue({ model: 'x', type: 'gguf', url: `${base}/x.safetensors` })).toThrow();
   });
+
+  it('invokes onSettle with the final task once a download completes', async () => {
+    slow = false;
+    const config = await makeTestConfig();
+    const llmModels = new LlmModelManager(config, log);
+    const settled: string[] = [];
+    const dl = new DownloadManager<LlmComponentType>(config, llmModels, log, (task) => {
+      settled.push(task.status);
+    });
+
+    const task = dl.enqueue({ model: 'qwen3-8b', type: 'gguf', url: `${base}/v.gguf`, name: 'v.gguf' });
+    await waitFor(() => task.status === 'completed');
+    await waitFor(() => settled.length > 0);
+    expect(settled).toEqual(['completed']);
+  });
 });
