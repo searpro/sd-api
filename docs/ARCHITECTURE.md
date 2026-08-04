@@ -19,8 +19,8 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
 - **Services** (constructed once, shared): `SdWrapper`, `ModelManager`,
   `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`,
   `LlmModelManager`, a second `DownloadManager<LlmComponentType>` instance
-  (`app.llmDownloads`), `LlmCatalogManager`. Augmented onto `FastifyInstance`
-  in `src/types.ts`.
+  (`app.llmDownloads`), `LlmCatalogManager`, `LogBuffer` (`app.logs`).
+  Augmented onto `FastifyInstance` in `src/types.ts`.
 
 ## Request → image lifecycle
 
@@ -93,6 +93,42 @@ sub-dirs) and `LlmModelManager implements ComponentPathResolver<LlmComponentType
 keeps each domain's API contract (and `ALLOWED_EXT`) from leaking into the
 other's.
 
+## Logs (`src/logs/buffer.ts`, `src/routes/logs.ts`)
+
+`server.ts` builds the pino instance itself (rather than passing
+`{ logger: {...} }` to `Fastify()`) so it can tee output two ways via
+`pino.multistream()`: to `process.stdout` (unchanged terminal behavior) and
+into a `LogBuffer` (an `EventEmitter` that also satisfies pino's
+`DestinationStream` — just a `write(msg: string)` method). Fastify's
+`logger` option is options-only and can't take a pre-built instance; the
+separate `loggerInstance` option is what accepts it. The constructed logger
+is explicitly typed `FastifyBaseLogger` before being passed in — leaving it
+as the inferred concrete `pino.Logger<...>` type makes Fastify's `Logger`
+generic default to that instead of `FastifyBaseLogger`, which breaks every
+route plugin (all typed against the default).
+
+`LogBuffer` keeps the last 2000 parsed records (in-memory, resets on
+restart — same posture as jobs/downloads/catalog) and derives a `category`
+per record at write time so neither the API nor the UI has to re-derive it:
+`error` (an `err` field, `level >= 50`, or a completed request with
+`statusCode >= 400` — most 4xx/5xx responses never call `.error()`, since
+the `AppError`/`ZodError` branches in `setErrorHandler` don't), `healthcheck`
+(`/health` requests), `http` (everything else completed), `sd-cli` /
+`llama-server` (matched by the `msg` field child-process output logs under —
+`'sd'` in `routes/generate.ts`, `'llama-server'` in
+`llm/server-manager.ts`), else `app`. Fastify logs each request as two
+separate lines correlated by `reqId` — `"incoming request"` (has `req.url`,
+no status yet) and `"request completed"` (has `res.statusCode`, no `req`).
+`LogBuffer` never stores the first: it holds a transient `reqId → url` map
+just long enough to tag the second line, which roughly halves buffered
+volume for free.
+
+`routes/logs.ts` follows the same "replay then subscribe" SSE shape as jobs
+and downloads (`GET /v1/logs` for a filtered snapshot, `GET /v1/logs/stream`
+for the replay burst + live tail), except it subscribes to one shared
+`LogBuffer` instance rather than a `Map<id, EventEmitter>` — there's no
+per-resource id here, just one process-wide log stream.
+
 ## Catalog (`src/catalog/`, `src/llm-catalog/`)
 
 `catalog/data.ts` is a curated `CatalogModel[]` (txt2img + edit image models).
@@ -105,16 +141,38 @@ download URL). Install (UI): write `model.json` manifest → enqueue a download
 per chosen component.
 
 `llm-catalog/` is a parallel, simpler catalog for LLMs (`data.ts` curates
-< 30B-param models across Llama/Qwen/Mistral/Gemma/Phi/DeepSeek-R1-distill
-families, sourced primarily from bartowski's and ggml-org's GGUF conversions
-— repo ids verified to exist against the real HF API, not memorized) —
-**reuses `catalog/hf.ts`'s `listComponentFiles()` unchanged**, since it's
-already generic over repo/path/match/format. The one LLM-specific wrinkle:
-a `gguf` (weights) component's HF source has no `match` filter, so without
-correction it would also surface the same repo's `mmproj-*.gguf`
-vision-projector files as bogus weights options — `LlmCatalogManager.files()`
-filters those out via `isMmproj()` (`llm-models/bundle.ts`) for `role ===
-'gguf'` responses.
+models across Llama/Qwen/Mistral/Gemma/Phi/DeepSeek-R1-distill/gpt-oss/GLM/
+Nemotron families, sourced primarily from ggml-org's, bartowski's and
+unsloth's GGUF conversions — repo ids verified to exist against the real HF
+API, not memorized; `ggml-org` publishing a conversion is treated as the
+strongest signal that mainline `llama.cpp` actually supports the
+architecture, since that's the project's own account) — **reuses
+`catalog/hf.ts`'s `listComponentFiles()` unchanged**, since it's already
+generic over repo/path/match/format. Each `LlmCatalogModel` carries `params`
+(total, drives download size/memory footprint) and an optional
+`activeParams` (MoE models only — what actually drives inference cost, since
+every expert stays resident in memory regardless of how many activate per
+token) plus a `tier` (`'mac' | 'cloud' | 'both'`, defaults to `'both'` via
+`LlmCatalogManager.list()` the same way `vision` defaults to `false`) so
+clients can filter by "what will this cost to run."
+
+`LlmCatalogManager.files()` applies two filters to every live HF listing,
+regardless of role:
+- **Shard exclusion** (`SHARD_RE`, `-\d{5}-of-\d{5}\.gguf$`): several newer,
+  larger repos publish some quants as multi-part shards once a file crosses
+  ~50GB, alongside other single-file quants of the same model — but this
+  app's downloader only fetches one file per component, so a lone shard
+  would install as a silently truncated, unusable bundle. Excluded outright
+  rather than surfaced with a warning, since there's no partial-file
+  detection anywhere downstream. (This is also why `MiniMax-M2` — otherwise
+  a strong efficiency pick — isn't in the catalog: every quant it ships is
+  shard-split except an unusably low-bit ternary one.)
+- **Draft-file exclusion** (`AUX_DRAFT_RE`, `mtp-`/`dflash-`/`eagle3-`
+  prefixes): several newer repos (Qwen3.6, Gemma 4, gpt-oss, GLM) ship
+  speculative-decoding draft-model files alongside the real weights: applied
+  only to `role === 'gguf'` (weights) responses, same as the pre-existing
+  `isMmproj()` (`llm-models/bundle.ts`) filter it sits alongside — without
+  both, either could surface as a bogus "weights" option.
 
 ## HuggingFace auth (`src/util/hf-auth.ts`)
 

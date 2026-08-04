@@ -23,19 +23,29 @@ function stubTree(entries: { path: string; size: number }[]) {
 }
 
 describe('LlmCatalogManager', () => {
-  it('lists curated LLMs, all under 30B params', () => {
+  it('lists curated LLMs spanning Mac-dev and cloud-production tiers', () => {
     const cat = new LlmCatalogManager(log);
     const models = cat.list();
-    expect(models.length).toBeGreaterThan(10);
-    for (const m of models) expect(m.params).toBeLessThan(30);
+    expect(models.length).toBeGreaterThan(20);
+    // Every entry defaults to a valid tier even when unset in data.ts.
+    for (const m of models) expect(['mac', 'cloud', 'both']).toContain(m.tier);
 
     const qwen = models.find((m) => m.id === 'qwen3-8b');
     expect(qwen).toBeTruthy();
     expect(qwen!.components.map((c) => c.role)).toEqual(['gguf']);
+    expect(qwen!.tier).toBe('both'); // unset in data.ts -> defaults to 'both'
 
     const vision = models.find((m) => m.id === 'gemma-3-4b-it');
     expect(vision!.vision).toBe(true);
     expect(vision!.components.map((c) => c.role).sort()).toEqual(['gguf', 'mmproj']);
+
+    // Newer, larger, resource-efficient MoE additions carry explicit tier +
+    // activeParams (total params can now legitimately exceed 30B — that cap
+    // was dropped once cloud-production picks were added).
+    const cloudPick = models.find((m) => m.id === 'gpt-oss-120b');
+    expect(cloudPick!.tier).toBe('cloud');
+    expect(cloudPick!.activeParams).toBe(5.1);
+    expect(cloudPick!.params).toBeGreaterThan(30);
   });
 
   it('resolves GGUF quant files via the (stubbed) HF API', async () => {
@@ -67,5 +77,32 @@ describe('LlmCatalogManager', () => {
   it('throws for an unknown model id', async () => {
     const cat = new LlmCatalogManager(log);
     await expect(cat.files('nonexistent-model')).rejects.toThrow();
+  });
+
+  it('excludes shard-split files ("-00001-of-00003.gguf") from every component', async () => {
+    stubTree([
+      { path: 'GLM-4.6V-Q4_K_M.gguf', size: 100 }, // single-file, usable
+      { path: 'GLM-4.6V-Q8_0-00001-of-00003.gguf', size: 50 }, // shard, must be excluded
+      { path: 'GLM-4.6V-Q8_0-00002-of-00003.gguf', size: 50 },
+      { path: 'GLM-4.6V-Q8_0-00003-of-00003.gguf', size: 50 },
+      { path: 'mmproj-GLM-4.6V-Q8_0.gguf', size: 10 },
+    ]);
+    const cat = new LlmCatalogManager(log);
+    const comps = await cat.files('glm-4.6v');
+    const gguf = comps.find((c) => c.role === 'gguf')!;
+    expect(gguf.files.map((f) => f.filename)).toEqual(['GLM-4.6V-Q4_K_M.gguf']);
+  });
+
+  it('excludes speculative-decoding draft files (mtp-/dflash-/eagle3-) from the weights list', async () => {
+    stubTree([
+      { path: 'Qwen3.6-35B-A3B-Q4_K_M.gguf', size: 100 },
+      { path: 'mtp-Qwen3.6-35B-A3B-Q4_0.gguf', size: 5 },
+      { path: 'dflash-Qwen3.6-35B-A3B-Q8_0.gguf', size: 5 },
+      { path: 'mmproj-Qwen3.6-35B-A3B-Q8_0.gguf', size: 10 },
+    ]);
+    const cat = new LlmCatalogManager(log);
+    const comps = await cat.files('qwen3.6-35b-a3b');
+    const gguf = comps.find((c) => c.role === 'gguf')!;
+    expect(gguf.files.map((f) => f.filename)).toEqual(['Qwen3.6-35B-A3B-Q4_K_M.gguf']);
   });
 });

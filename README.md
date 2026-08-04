@@ -103,9 +103,14 @@ A dependency-free, single-file frontend is served at `/` (no build step —
   component, then download + install as a bundle in one click.
 - **Models** — list installed models with size/type, delete them, and
   download new components (checkpoint/vae/clip) by URL into a model bundle.
+- **Logs** — a live tail of the app's own logs (requests, errors,
+  health-checks, `sd-cli`/`llama-server` child-process output), filterable by
+  category, so terminal-only NDJSON isn't the only way to see what's
+  happening. See [Live logs](#live-logs-v1logs) below.
 
 It uses only the public endpoints (`/v1/jobs`, `/v1/jobs/:id/stream`,
-`/v1/models`, `/v1/outputs/...`), so it works against any deployment.
+`/v1/models`, `/v1/outputs/...`, `/v1/logs`, `/v1/logs/stream`), so it works
+against any deployment.
 
 ## Configuration (Phase 7)
 
@@ -444,22 +449,41 @@ share one tested implementation (see `docs/ARCHITECTURE.md`).
 
 ### Model catalog (`/v1/llm-catalog`)
 
-A curated catalog of popular open-weight LLMs under 30B params
-([`src/llm-catalog/data.ts`](src/llm-catalog/data.ts)) — Llama, Qwen, Mistral,
-Gemma, Phi, DeepSeek-R1-distill, plus vision-language models (Gemma 3,
-Qwen2.5-VL, SmolVLM2). Like the image catalog, only repo ids are hardcoded;
-the actual quantization files are resolved **live** via the HuggingFace Hub
-API (shared `src/catalog/hf.ts`, extended to also recognize llama.cpp's `IQ*`
-imatrix quant naming).
+A curated catalog of popular open-weight LLMs
+([`src/llm-catalog/data.ts`](src/llm-catalog/data.ts)) spanning two
+deployment tiers — each entry carries a `tier` (`mac` / `cloud` / `both`,
+default `both`) plus `params`/`activeParams` so the UI and API can surface
+"what will this actually cost to run":
+
+- **`mac`** — fits comfortably in ~24GB unified memory (M-series Mac) at a
+  reasonable quant. Mostly dense models ≤ 14B, or MoE models with a small
+  total footprint (e.g. `gpt-oss-20b`, `Qwen3.6-35B-A3B`).
+- **`cloud`** — needs a real GPU. Typically a large-total/small-*active*
+  MoE — `activeParams` is what actually drives inference cost/speed, since a
+  MoE model keeps every expert resident in memory even though only a subset
+  computes per token (e.g. `gpt-oss-120b`: 117B total, only 5.1B active).
+
+Families: Llama, Qwen (2.5/3/3.6/Next), Mistral, Gemma (2/3/4), Phi,
+DeepSeek-R1-distill, gpt-oss, GLM, Nemotron, plus vision-language models
+(Gemma 3/4, Qwen2.5-VL, Qwen3.6, GLM-4.6V, SmolVLM2). Like the image
+catalog, only repo ids are hardcoded; the actual quantization files are
+resolved **live** via the HuggingFace Hub API (shared `src/catalog/hf.ts`,
+extended to recognize llama.cpp's `IQ*` imatrix and `MXFP4` quant naming).
+Two filters are applied to every live listing regardless of model: files
+matching a shard pattern (`-00001-of-00003.gguf`) are excluded, since this
+app's downloader only fetches one file per component; so are
+speculative-decoding draft files (`mtp-`/`dflash-`/`eagle3-` prefixes) that
+several newer model repos ship alongside the real weights.
 
 ```bash
-curl localhost:3000/v1/llm-catalog                        # curated models
+curl localhost:3000/v1/llm-catalog                        # curated models (incl. tier/activeParams)
 curl localhost:3000/v1/llm-catalog/qwen3-8b/files         # live quant options (HF)
 ```
 
 The web UI's **LLM → Catalog** sub-tab drives the same install flow as the
-image Catalog tab: pick a model → pick a quantization per component → writes
-`model.json` then enqueues the download(s).
+image Catalog tab — plus a tier filter (All / Mac / Cloud) — pick a model →
+pick a quantization per component → writes `model.json` then enqueues the
+download(s).
 
 ### Configuration
 
@@ -544,6 +568,28 @@ curl -X DELETE localhost:3000/v1/models/z-image-turbo                       # wh
 curl -X DELETE localhost:3000/v1/models/z-image-turbo/vae/z_image_vae.safetensors  # one file
 ```
 
+### Live logs (`/v1/logs`)
+
+Every log line the app emits (Fastify request/response logging, service
+`app.log.*` calls, forwarded `sd-cli`/`llama-server` child-process output)
+is teed into an in-memory ring buffer (last 2000 entries, resets on
+restart — terminal stdout is unaffected) and tagged with a `category`:
+`http`, `healthcheck`, `error`, `sd-cli`, `llama-server`, `app`. A 4xx/5xx
+response is always tagged `error`, even if nothing threw. Requests to
+`/health` are tagged `healthcheck` rather than `http` so they're easy to
+filter out.
+
+```bash
+curl localhost:3000/v1/logs                       # last 300 entries (default)
+curl localhost:3000/v1/logs?category=error         # only errors
+curl localhost:3000/v1/logs?level=warn&limit=50    # last 50 warnings
+
+curl -N localhost:3000/v1/logs/stream              # SSE: replay burst, then live entries
+```
+
+The web UI's **Logs** tab consumes `/v1/logs/stream` with filter chips per
+category, a text search, and pause/clear controls.
+
 ## CLI flag mapping (Spec section 3)
 
 API parameters map directly to `stable-diffusion.cpp` flags in
@@ -604,7 +650,8 @@ src/
   llm/              # llama-server process manager, arg mapping, installer
   llm-models/       # LLM bundle resolver + manager (flat <id>/ layout)
   llm-catalog/      # curated LLM catalog (reuses catalog/hf.ts)
-  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog
+  logs/             # in-memory ring buffer tee'd from pino (buffer.ts)
+  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog, logs
   util/             # path safety, filename, validation
 public/             # thin web UI (single static index.html, no build step)
 test/               # vitest unit + integration tests (uses fake `sd`/`llama-server` binaries)
