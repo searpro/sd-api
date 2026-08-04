@@ -105,16 +105,38 @@ download URL). Install (UI): write `model.json` manifest → enqueue a download
 per chosen component.
 
 `llm-catalog/` is a parallel, simpler catalog for LLMs (`data.ts` curates
-< 30B-param models across Llama/Qwen/Mistral/Gemma/Phi/DeepSeek-R1-distill
-families, sourced primarily from bartowski's and ggml-org's GGUF conversions
-— repo ids verified to exist against the real HF API, not memorized) —
-**reuses `catalog/hf.ts`'s `listComponentFiles()` unchanged**, since it's
-already generic over repo/path/match/format. The one LLM-specific wrinkle:
-a `gguf` (weights) component's HF source has no `match` filter, so without
-correction it would also surface the same repo's `mmproj-*.gguf`
-vision-projector files as bogus weights options — `LlmCatalogManager.files()`
-filters those out via `isMmproj()` (`llm-models/bundle.ts`) for `role ===
-'gguf'` responses.
+models across Llama/Qwen/Mistral/Gemma/Phi/DeepSeek-R1-distill/gpt-oss/GLM/
+Nemotron families, sourced primarily from ggml-org's, bartowski's and
+unsloth's GGUF conversions — repo ids verified to exist against the real HF
+API, not memorized; `ggml-org` publishing a conversion is treated as the
+strongest signal that mainline `llama.cpp` actually supports the
+architecture, since that's the project's own account) — **reuses
+`catalog/hf.ts`'s `listComponentFiles()` unchanged**, since it's already
+generic over repo/path/match/format. Each `LlmCatalogModel` carries `params`
+(total, drives download size/memory footprint) and an optional
+`activeParams` (MoE models only — what actually drives inference cost, since
+every expert stays resident in memory regardless of how many activate per
+token) plus a `tier` (`'mac' | 'cloud' | 'both'`, defaults to `'both'` via
+`LlmCatalogManager.list()` the same way `vision` defaults to `false`) so
+clients can filter by "what will this cost to run."
+
+`LlmCatalogManager.files()` applies two filters to every live HF listing,
+regardless of role:
+- **Shard exclusion** (`SHARD_RE`, `-\d{5}-of-\d{5}\.gguf$`): several newer,
+  larger repos publish some quants as multi-part shards once a file crosses
+  ~50GB, alongside other single-file quants of the same model — but this
+  app's downloader only fetches one file per component, so a lone shard
+  would install as a silently truncated, unusable bundle. Excluded outright
+  rather than surfaced with a warning, since there's no partial-file
+  detection anywhere downstream. (This is also why `MiniMax-M2` — otherwise
+  a strong efficiency pick — isn't in the catalog: every quant it ships is
+  shard-split except an unusably low-bit ternary one.)
+- **Draft-file exclusion** (`AUX_DRAFT_RE`, `mtp-`/`dflash-`/`eagle3-`
+  prefixes): several newer repos (Qwen3.6, Gemma 4, gpt-oss, GLM) ship
+  speculative-decoding draft-model files alongside the real weights: applied
+  only to `role === 'gguf'` (weights) responses, same as the pre-existing
+  `isMmproj()` (`llm-models/bundle.ts`) filter it sits alongside — without
+  both, either could surface as a bogus "weights" option.
 
 ## HuggingFace auth (`src/util/hf-auth.ts`)
 

@@ -26,8 +26,25 @@ export interface LlmCatalogModel {
   id: string;
   name: string;
   description?: string;
-  /** Parameter count in billions, for display/sorting (always < 30 in this catalog). */
+  /**
+   * Total parameter count in billions — this is what determines download
+   * size and memory footprint (a MoE model keeps every expert resident in
+   * memory even though only `activeParams` compute per token).
+   */
   params: number;
+  /**
+   * Active parameters per token in billions, for sparse MoE models — this is
+   * what actually drives inference speed/cost, and is usually far below
+   * `params`. Omitted for dense models (active == total).
+   */
+  activeParams?: number;
+  /**
+   * Suggested deployment tier: 'mac' fits comfortably in ~24GB unified
+   * memory at a reasonable quant; 'cloud' needs a real GPU; 'both' (default)
+   * works reasonably on either. Advisory only — the live file listing always
+   * shows every quant regardless of tier.
+   */
+  tier?: 'mac' | 'cloud' | 'both';
   /** Vision-language model: paired with an mmproj vision projector. */
   vision?: boolean;
   /** Model family, for grouping in the UI (e.g. "Llama", "Qwen"). */

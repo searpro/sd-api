@@ -444,22 +444,41 @@ share one tested implementation (see `docs/ARCHITECTURE.md`).
 
 ### Model catalog (`/v1/llm-catalog`)
 
-A curated catalog of popular open-weight LLMs under 30B params
-([`src/llm-catalog/data.ts`](src/llm-catalog/data.ts)) — Llama, Qwen, Mistral,
-Gemma, Phi, DeepSeek-R1-distill, plus vision-language models (Gemma 3,
-Qwen2.5-VL, SmolVLM2). Like the image catalog, only repo ids are hardcoded;
-the actual quantization files are resolved **live** via the HuggingFace Hub
-API (shared `src/catalog/hf.ts`, extended to also recognize llama.cpp's `IQ*`
-imatrix quant naming).
+A curated catalog of popular open-weight LLMs
+([`src/llm-catalog/data.ts`](src/llm-catalog/data.ts)) spanning two
+deployment tiers — each entry carries a `tier` (`mac` / `cloud` / `both`,
+default `both`) plus `params`/`activeParams` so the UI and API can surface
+"what will this actually cost to run":
+
+- **`mac`** — fits comfortably in ~24GB unified memory (M-series Mac) at a
+  reasonable quant. Mostly dense models ≤ 14B, or MoE models with a small
+  total footprint (e.g. `gpt-oss-20b`, `Qwen3.6-35B-A3B`).
+- **`cloud`** — needs a real GPU. Typically a large-total/small-*active*
+  MoE — `activeParams` is what actually drives inference cost/speed, since a
+  MoE model keeps every expert resident in memory even though only a subset
+  computes per token (e.g. `gpt-oss-120b`: 117B total, only 5.1B active).
+
+Families: Llama, Qwen (2.5/3/3.6/Next), Mistral, Gemma (2/3/4), Phi,
+DeepSeek-R1-distill, gpt-oss, GLM, Nemotron, plus vision-language models
+(Gemma 3/4, Qwen2.5-VL, Qwen3.6, GLM-4.6V, SmolVLM2). Like the image
+catalog, only repo ids are hardcoded; the actual quantization files are
+resolved **live** via the HuggingFace Hub API (shared `src/catalog/hf.ts`,
+extended to recognize llama.cpp's `IQ*` imatrix and `MXFP4` quant naming).
+Two filters are applied to every live listing regardless of model: files
+matching a shard pattern (`-00001-of-00003.gguf`) are excluded, since this
+app's downloader only fetches one file per component; so are
+speculative-decoding draft files (`mtp-`/`dflash-`/`eagle3-` prefixes) that
+several newer model repos ship alongside the real weights.
 
 ```bash
-curl localhost:3000/v1/llm-catalog                        # curated models
+curl localhost:3000/v1/llm-catalog                        # curated models (incl. tier/activeParams)
 curl localhost:3000/v1/llm-catalog/qwen3-8b/files         # live quant options (HF)
 ```
 
 The web UI's **LLM → Catalog** sub-tab drives the same install flow as the
-image Catalog tab: pick a model → pick a quantization per component → writes
-`model.json` then enqueues the download(s).
+image Catalog tab — plus a tier filter (All / Mac / Cloud) — pick a model →
+pick a quantization per component → writes `model.json` then enqueues the
+download(s).
 
 ### Configuration
 

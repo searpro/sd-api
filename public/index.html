@@ -369,10 +369,16 @@
               <button class="ghost" id="refreshLlmCatalog" type="button">Refresh</button>
             </div>
             <p style="color:var(--muted);font-size:12px;margin:0 0 10px;">
-              Curated GGUF-quantized LLMs, all under 30B params. Pick a model, then choose a
-              quantization for each component.
+              Curated GGUF LLMs spanning a Mac-friendly dev tier and a larger, efficient-MoE
+              cloud tier. Pick a model, then choose a quantization for each component.
             </p>
-            <div id="llmCatalogList"></div>
+            <label for="llmTierFilter" style="margin-top:0;">Deployment tier</label>
+            <select id="llmTierFilter">
+              <option value="">All models</option>
+              <option value="mac">Mac / local dev (~24GB)</option>
+              <option value="cloud">Cloud GPU (production)</option>
+            </select>
+            <div id="llmCatalogList" style="margin-top:10px;"></div>
           </div>
 
           <div class="panel">
@@ -1337,19 +1343,31 @@
         try {
           const { models } = await api('/v1/llm-catalog');
           llmCatalogModels = models;
-          const list = $('llmCatalogList');
-          list.innerHTML = '';
-          models.forEach((m) => {
+          renderLlmCatalogList();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      function renderLlmCatalogList() {
+        const tierFilter = $('llmTierFilter').value;
+        const list = $('llmCatalogList');
+        list.innerHTML = '';
+        const tierLabel = { mac: 'Mac', cloud: 'cloud', both: 'Mac + cloud' };
+        llmCatalogModels
+          .filter((m) => !tierFilter || m.tier === tierFilter || m.tier === 'both')
+          .forEach((m) => {
             const card = document.createElement('div');
             card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel-2);cursor:pointer;';
             const visionBadge = m.vision ? ' <span class="pill" style="border-color:var(--accent);color:#9cc2ff">vision</span>' : '';
-            card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + m.params + 'B · ' + m.family + '</span>' + visionBadge +
+            const sizeLabel = m.activeParams ? m.params + 'B (' + m.activeParams + 'B active)' : m.params + 'B';
+            card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + sizeLabel + ' · ' + m.family + '</span>' +
+              ' <span class="pill">' + tierLabel[m.tier] + '</span>' + visionBadge +
               '<div style="color:var(--muted);font-size:12px;margin-top:3px;">' + (m.description || '') + '</div>';
             card.onclick = () => { document.querySelectorAll('#llmCatalogList > div').forEach(d => d.style.borderColor = 'var(--border)'); card.style.borderColor = 'var(--accent)'; selectLlmCatalogModel(m.id); };
             list.appendChild(card);
           });
-        } catch (e) { toast(e.message, true); }
       }
+
+      $('llmTierFilter').addEventListener('change', renderLlmCatalogList);
 
       async function selectLlmCatalogModel(id) {
         const model = llmCatalogModels.find((m) => m.id === id);
