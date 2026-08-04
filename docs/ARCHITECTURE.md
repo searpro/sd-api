@@ -19,8 +19,8 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
 - **Services** (constructed once, shared): `SdWrapper`, `ModelManager`,
   `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`,
   `LlmModelManager`, a second `DownloadManager<LlmComponentType>` instance
-  (`app.llmDownloads`), `LlmCatalogManager`. Augmented onto `FastifyInstance`
-  in `src/types.ts`.
+  (`app.llmDownloads`), `LlmCatalogManager`, `LogBuffer` (`app.logs`).
+  Augmented onto `FastifyInstance` in `src/types.ts`.
 
 ## Request → image lifecycle
 
@@ -92,6 +92,42 @@ sub-dirs) and `LlmModelManager implements ComponentPathResolver<LlmComponentType
 `app.llmDownloads`) rather than merging both `type` unions into one class —
 keeps each domain's API contract (and `ALLOWED_EXT`) from leaking into the
 other's.
+
+## Logs (`src/logs/buffer.ts`, `src/routes/logs.ts`)
+
+`server.ts` builds the pino instance itself (rather than passing
+`{ logger: {...} }` to `Fastify()`) so it can tee output two ways via
+`pino.multistream()`: to `process.stdout` (unchanged terminal behavior) and
+into a `LogBuffer` (an `EventEmitter` that also satisfies pino's
+`DestinationStream` — just a `write(msg: string)` method). Fastify's
+`logger` option is options-only and can't take a pre-built instance; the
+separate `loggerInstance` option is what accepts it. The constructed logger
+is explicitly typed `FastifyBaseLogger` before being passed in — leaving it
+as the inferred concrete `pino.Logger<...>` type makes Fastify's `Logger`
+generic default to that instead of `FastifyBaseLogger`, which breaks every
+route plugin (all typed against the default).
+
+`LogBuffer` keeps the last 2000 parsed records (in-memory, resets on
+restart — same posture as jobs/downloads/catalog) and derives a `category`
+per record at write time so neither the API nor the UI has to re-derive it:
+`error` (an `err` field, `level >= 50`, or a completed request with
+`statusCode >= 400` — most 4xx/5xx responses never call `.error()`, since
+the `AppError`/`ZodError` branches in `setErrorHandler` don't), `healthcheck`
+(`/health` requests), `http` (everything else completed), `sd-cli` /
+`llama-server` (matched by the `msg` field child-process output logs under —
+`'sd'` in `routes/generate.ts`, `'llama-server'` in
+`llm/server-manager.ts`), else `app`. Fastify logs each request as two
+separate lines correlated by `reqId` — `"incoming request"` (has `req.url`,
+no status yet) and `"request completed"` (has `res.statusCode`, no `req`).
+`LogBuffer` never stores the first: it holds a transient `reqId → url` map
+just long enough to tag the second line, which roughly halves buffered
+volume for free.
+
+`routes/logs.ts` follows the same "replay then subscribe" SSE shape as jobs
+and downloads (`GET /v1/logs` for a filtered snapshot, `GET /v1/logs/stream`
+for the replay burst + live tail), except it subscribes to one shared
+`LogBuffer` instance rather than a `Map<id, EventEmitter>` — there's no
+per-resource id here, just one process-wide log stream.
 
 ## Catalog (`src/catalog/`, `src/llm-catalog/`)
 

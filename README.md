@@ -103,9 +103,14 @@ A dependency-free, single-file frontend is served at `/` (no build step —
   component, then download + install as a bundle in one click.
 - **Models** — list installed models with size/type, delete them, and
   download new components (checkpoint/vae/clip) by URL into a model bundle.
+- **Logs** — a live tail of the app's own logs (requests, errors,
+  health-checks, `sd-cli`/`llama-server` child-process output), filterable by
+  category, so terminal-only NDJSON isn't the only way to see what's
+  happening. See [Live logs](#live-logs-v1logs) below.
 
 It uses only the public endpoints (`/v1/jobs`, `/v1/jobs/:id/stream`,
-`/v1/models`, `/v1/outputs/...`), so it works against any deployment.
+`/v1/models`, `/v1/outputs/...`, `/v1/logs`, `/v1/logs/stream`), so it works
+against any deployment.
 
 ## Configuration (Phase 7)
 
@@ -563,6 +568,28 @@ curl -X DELETE localhost:3000/v1/models/z-image-turbo                       # wh
 curl -X DELETE localhost:3000/v1/models/z-image-turbo/vae/z_image_vae.safetensors  # one file
 ```
 
+### Live logs (`/v1/logs`)
+
+Every log line the app emits (Fastify request/response logging, service
+`app.log.*` calls, forwarded `sd-cli`/`llama-server` child-process output)
+is teed into an in-memory ring buffer (last 2000 entries, resets on
+restart — terminal stdout is unaffected) and tagged with a `category`:
+`http`, `healthcheck`, `error`, `sd-cli`, `llama-server`, `app`. A 4xx/5xx
+response is always tagged `error`, even if nothing threw. Requests to
+`/health` are tagged `healthcheck` rather than `http` so they're easy to
+filter out.
+
+```bash
+curl localhost:3000/v1/logs                       # last 300 entries (default)
+curl localhost:3000/v1/logs?category=error         # only errors
+curl localhost:3000/v1/logs?level=warn&limit=50    # last 50 warnings
+
+curl -N localhost:3000/v1/logs/stream              # SSE: replay burst, then live entries
+```
+
+The web UI's **Logs** tab consumes `/v1/logs/stream` with filter chips per
+category, a text search, and pause/clear controls.
+
 ## CLI flag mapping (Spec section 3)
 
 API parameters map directly to `stable-diffusion.cpp` flags in
@@ -623,7 +650,8 @@ src/
   llm/              # llama-server process manager, arg mapping, installer
   llm-models/       # LLM bundle resolver + manager (flat <id>/ layout)
   llm-catalog/      # curated LLM catalog (reuses catalog/hf.ts)
-  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog
+  logs/             # in-memory ring buffer tee'd from pino (buffer.ts)
+  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog, logs
   util/             # path safety, filename, validation
 public/             # thin web UI (single static index.html, no build step)
 test/               # vitest unit + integration tests (uses fake `sd`/`llama-server` binaries)

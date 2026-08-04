@@ -1,4 +1,5 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyBaseLogger } from 'fastify';
+import pino from 'pino';
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastifyStatic from '@fastify/static';
@@ -20,6 +21,7 @@ import { DownloadManager } from './downloads/manager.js';
 import { LlamaServerManager } from './llm/server-manager.js';
 import { LlmModelManager, type LlmComponentType } from './llm-models/manager.js';
 import { LlmCatalogManager } from './llm-catalog/manager.js';
+import { LogBuffer } from './logs/buffer.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
@@ -34,11 +36,25 @@ import { llmRoutes } from './routes/llm.js';
 import { llmModelRoutes } from './routes/llm-models.js';
 import { llmDownloadRoutes } from './routes/llm-downloads.js';
 import { llmCatalogRoutes } from './routes/llm-catalog.js';
+import { logRoutes } from './routes/logs.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
+  // Tee every log line to stdout (unchanged terminal behavior) and into an
+  // in-memory ring buffer that backs the web UI's Logs tab (GET /v1/logs,
+  // GET /v1/logs/stream). Fastify's `logger` option is options-only — a
+  // pre-built pino instance needs the separate `loggerInstance` option.
+  const logs = new LogBuffer();
+  // Widened to FastifyBaseLogger (not the concrete pino.Logger<...> type) so
+  // TS infers Fastify's Logger generic as its default — otherwise every
+  // route plugin (typed against the default FastifyInstance) stops matching.
+  const pinoLogger: FastifyBaseLogger = pino(
+    { level: config.logLevel },
+    pino.multistream([{ stream: process.stdout }, { stream: logs }]),
+  );
+
   const app = Fastify({
-    logger: { level: config.logLevel },
+    loggerInstance: pinoLogger,
     // Idle keep-alive sockets (e.g. an OpenAI-client connection pool sitting
     // on /v1/llm/*) otherwise make close() hang waiting for them to end
     // naturally — force them shut so shutdown/test teardown is bounded.
@@ -74,6 +90,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   app.decorate('llmModels', llmModels);
   app.decorate('llmDownloads', llmDownloads);
   app.decorate('llmCatalog', llmCatalog);
+  app.decorate('logs', logs);
 
   // OpenAPI 3.1 docs (Phase 8).
   await app.register(fastifySwagger, {
@@ -101,6 +118,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
             'model management (/v1/llm-models) and catalog (/v1/llm-catalog)',
         },
         { name: 'system', description: 'Health & meta' },
+        { name: 'logs', description: 'Live log viewer (in-memory ring buffer, tees stdout)' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -152,6 +170,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(llmModelRoutes);
   await app.register(llmDownloadRoutes);
   await app.register(llmCatalogRoutes);
+  await app.register(logRoutes);
 
   // Thin web UI (static, no build step). Served at "/"; API routes above take
   // precedence over the static wildcard. public/ sits next to src/ and dist/.
