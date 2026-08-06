@@ -56,9 +56,14 @@ export const AUDIO_CATALOG: AudioCatalogModel[] = [
     id: 'chatterbox',
     name: 'Chatterbox (Multilingual)',
     description:
-      'Full TTS pipeline with voice cloning (character tokenizer -> AR -> S3Gen -> HiFT vocoder), 23 languages.',
+      'Voice-cloning TTS (character tokenizer -> AR -> S3Gen -> HiFT vocoder), 23 languages. ' +
+      'Cloning-only, not plain text-to-speech — every request needs a reference voice WAV ' +
+      '(voice_ref) via a registered voice preset (model.json\'s voicePresets/defaultVoicePreset), ' +
+      'or task:"vc" for voice conversion. Confirmed against the real binary: it hard-rejects ' +
+      'task:"tts" ("Chatterbox supports VoiceCloning and VoiceConversion") — audiocpp_server\'s own ' +
+      'valid task enum includes "tts" generically, but Chatterbox\'s engine only implements "clon"/"vc".',
     family: 'chatterbox',
-    task: 'tts',
+    task: 'clon',
     reference: 'https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/Chatterbox-GGUF',
     components: [
       {

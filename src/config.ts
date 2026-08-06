@@ -52,6 +52,7 @@ const configFileSchema = z
     audio_port: z.number().int().positive(),
     audio_startup_timeout_ms: z.number().int().positive(),
     audio_request_timeout_ms: z.number().int().min(0),
+    audio_voice_refs_dir: z.string(),
   })
   .partial();
 
@@ -125,6 +126,13 @@ export interface Config {
   audioStartupTimeoutMs: number;
   /** Generated server config's busy_timeout_ms (0 disables the guard). */
   audioRequestTimeoutMs: number;
+  /**
+   * Root directory for user-uploaded reference voice audio (WAV), used as
+   * `voice_ref` for voice-cloning/conversion models like Chatterbox. Mirrors
+   * `inputsDir` (reference images for img2img) — uploaded once, then
+   * referenced by name in a `/v1/audio/speech` request.
+   */
+  audioVoiceRefsDir: string;
 }
 
 function readJsonIfExists(path: string): Record<string, unknown> {
@@ -194,6 +202,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     audio_port: num(env.SD_AUDIO_PORT),
     audio_startup_timeout_ms: num(env.SD_AUDIO_STARTUP_TIMEOUT_MS),
     audio_request_timeout_ms: num(env.SD_AUDIO_REQUEST_TIMEOUT_MS),
+    audio_voice_refs_dir: env.SD_AUDIO_VOICE_REFS_DIR,
   });
 
   const merged = { ...fileConfig, ...stripUndefined(envConfig) };
@@ -238,6 +247,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     audioPort: parsed.audio_port,
     audioStartupTimeoutMs: parsed.audio_startup_timeout_ms,
     audioRequestTimeoutMs: parsed.audio_request_timeout_ms,
+    audioVoiceRefsDir: resolve(process.cwd(), parsed.audio_voice_refs_dir),
   };
 }
 

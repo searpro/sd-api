@@ -554,6 +554,8 @@ curl 'localhost:3000/v1/audio/voices?model=pocket-tts'
 | `GET /v1/audio/voices` | Cached voice ids / configured presets for a TTS model |
 | `GET /v1/audio/models` | OpenAI-shape listing of currently configured models |
 | `POST /v1/audio/tasks/run` | Generic escape hatch for tasks without a dedicated route (voice conversion, music generation, source separation, ...) |
+| `POST /v1/audio-voice-refs` | Upload a reference voice WAV (multipart) — see "Voice cloning" below |
+| `POST /v1/audio-models/:model/voice-presets` | Register an uploaded reference as a named, selectable voice preset |
 
 ### Model management (`/v1/audio-models`)
 
@@ -578,7 +580,41 @@ sides (progress, resume, cancel) via `/v1/audio-downloads` —
 `DownloadManager`'s `ComponentPathResolver<TType>` generalization now backs a
 third domain. A completed download debounce-restarts `audiocpp_server` (same
 pattern as LLM auto-restart) so the new model becomes servable without a
-manual restart.
+manual restart. `PUT .../manifest` restarts synchronously instead, so a
+family/task/voice-preset edit is live by the time the response comes back.
+
+#### Voice cloning / conversion models (e.g. Chatterbox)
+
+Some TTS families are cloning-only — they reject plain text input and need a
+reference voice WAV. Confirmed against the real binary: `audiocpp_server`
+doesn't take a reference file directly on a `/v1/audio/speech` request body;
+it has to be pre-registered as a named **voice preset** in the model's
+`model.json`, then selected per-request via the OpenAI-shape `"voice"` field.
+Also note the model's own `task` must match what the family actually
+implements — audio.cpp's task enum includes `"tts"` generically, but e.g.
+Chatterbox only implements `"clon"`/`"vc"` and hard-rejects `"tts"`.
+
+```bash
+# 1. Upload a reference WAV (mirrors /v1/inputs for images).
+curl -X POST localhost:3000/v1/audio-voice-refs -F file=@alice.wav
+# -> {"voiceRefs":[{"name":"<uuid>.wav","path":"/abs/path/<uuid>.wav", ...}]}
+
+# 2. Register it as a named voice preset (read-merge-write over model.json,
+#    doesn't clobber existing presets; restarts audiocpp_server synchronously).
+curl -X POST localhost:3000/v1/audio-models/chatterbox/voice-presets \
+  -H 'content-type: application/json' \
+  -d '{"name":"alice","voice_ref":"/abs/path/<uuid>.wav","reference_text":"optional transcript"}'
+
+# 3. Select it by name.
+curl -X POST localhost:3000/v1/audio/speech -o out.wav \
+  -H 'content-type: application/json' \
+  -d '{"model":"chatterbox","input":"Hello!","voice":"alice"}'
+```
+
+The web UI's Speak tab has an expandable "Voice reference" section that
+drives the same flow (upload/pick a WAV, optional transcript, then Generate
+speech registers the preset — once per unique file, cached client-side — and
+calls speech with `voice` set).
 
 ### Model catalog (`/v1/audio-catalog`)
 

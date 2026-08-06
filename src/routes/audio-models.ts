@@ -37,6 +37,15 @@ const downloadSchema = z.object({
   name: z.string().optional(),
 });
 
+const voicePresetSchema = z
+  .object({
+    name: z.string().min(1),
+    voice_ref: z.string().optional(),
+    reference_text: z.string().optional(),
+    makeDefault: z.boolean().optional(),
+  })
+  .passthrough();
+
 const manifestSchema = z.object({
   name: z.string().optional(),
   family: z.string().min(1),
@@ -119,7 +128,9 @@ export async function audioModelRoutes(fastify: FastifyInstance): Promise<void> 
         summary: 'Write an audio bundle sidecar (model.json)',
         description:
           'family/task are required — audiocpp_server needs them to pick the right loading ' +
-          "code and can't infer either from files alone. Take effect on the next server restart.",
+          'code and can\'t infer either from files alone. Restarts audiocpp_server (regenerating ' +
+          'its --config registry) before responding, so the change — including a new/updated ' +
+          '`voicePresets` entry — is live immediately, not just "on the next restart".',
         params: z.object({ model: z.string() }),
         body: manifestSchema,
         response: { 200: bundleSchema, 400: errorResponseSchema },
@@ -133,7 +144,79 @@ export async function audioModelRoutes(fastify: FastifyInstance): Promise<void> 
           .code(400)
           .send({ error: { code: 'INTERNAL_ERROR', message: 'Failed to write manifest' } });
       }
+      try {
+        await app.audio.restart();
+      } catch (err) {
+        req.log.warn(
+          { model: req.params.model, err: (err as Error).message },
+          'audiocpp_server restart after manifest write failed — model.json was saved, but the ' +
+            'server may need a manual restart to serve it',
+        );
+      }
       return reply.send(bundle);
+    },
+  );
+
+  // Register (or update) a single named voice preset without clobbering the
+  // rest of the manifest — read-merge-write over writeManifest, since the
+  // server config's `voice_presets` is per-model and audiocpp_server only
+  // selects one per request via the OpenAI-shape `"voice"` request field
+  // (confirmed against the real binary: cloning-only families like
+  // Chatterbox ignore a bare `voice_ref` on the request itself — the
+  // reference audio has to be pre-registered here, in model.json).
+  app.post<{ Params: { model: string } }>(
+    '/v1/audio-models/:model/voice-presets',
+    {
+      schema: {
+        tags: ['audio'],
+        summary: 'Register a named voice preset (e.g. a cloning reference WAV) on a model',
+        description:
+          'Merges into the existing model.json `voicePresets` (rather than replacing the whole ' +
+          'manifest like PUT .../manifest) and restarts audiocpp_server so it\'s selectable ' +
+          'immediately via `{"model", "input", "voice": "<name>"}` on /v1/audio/speech. Typically ' +
+          '`voice_ref` is the `path` returned by POST /v1/audio-voice-refs.',
+        params: z.object({ model: z.string() }),
+        body: voicePresetSchema,
+        response: {
+          200: z.object({
+            model: bundleSchema,
+            voicePresets: z.array(z.string()),
+            defaultVoicePreset: z.unknown().optional(),
+          }),
+          400: errorResponseSchema,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { name, makeDefault, ...presetFields } = req.body as z.infer<typeof voicePresetSchema>;
+      const manifest = await app.audioModels.getManifest(req.params.model);
+      if (!manifest) {
+        return reply.code(400).send({
+          error: {
+            code: 'INVALID_MODEL',
+            message: `Audio model "${req.params.model}" has no model.json yet — set family/task first via PUT .../manifest`,
+          },
+        });
+      }
+      const voicePresets = { ...(manifest.voicePresets ?? {}), [name]: presetFields };
+      const defaultVoicePreset =
+        makeDefault || manifest.defaultVoicePreset === undefined ? name : manifest.defaultVoicePreset;
+      await app.audioModels.writeManifest(req.params.model, { ...manifest, voicePresets, defaultVoicePreset });
+      const bundle = await app.audioModels.get(req.params.model);
+      if (!bundle) {
+        return reply
+          .code(400)
+          .send({ error: { code: 'INTERNAL_ERROR', message: 'Failed to write voice preset' } });
+      }
+      try {
+        await app.audio.restart();
+      } catch (err) {
+        req.log.warn(
+          { model: req.params.model, err: (err as Error).message },
+          'audiocpp_server restart after voice preset write failed',
+        );
+      }
+      return reply.send({ model: bundle, voicePresets: Object.keys(voicePresets), defaultVoicePreset });
     },
   );
 

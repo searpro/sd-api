@@ -428,6 +428,28 @@
             <datalist id="audioTtsModelIds"></datalist>
             <label for="audioSpeakInput">Text</label>
             <textarea id="audioSpeakInput" placeholder="Text to speak…" required></textarea>
+
+            <details id="audioVoiceRefDetails" style="margin-top:10px;">
+              <summary style="cursor:pointer;color:var(--muted);font-size:12.5px;">
+                Voice reference — <strong>required</strong> for cloning-only models (e.g. Chatterbox)
+              </summary>
+              <div style="margin-top:8px;">
+                <label for="audioVoiceRefSelect">Use an uploaded reference</label>
+                <select id="audioVoiceRefSelect">
+                  <option value="">— none —</option>
+                </select>
+                <label for="audioVoiceRefFile" style="margin-top:8px;">…or upload a new WAV</label>
+                <input id="audioVoiceRefFile" type="file" accept="audio/wav,.wav" />
+                <label for="audioVoiceRefText" style="margin-top:8px;">Reference transcript (optional)</label>
+                <input id="audioVoiceRefText" placeholder="Transcript matching the reference audio…" />
+                <p style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5;">
+                  Some TTS models only support voice cloning/conversion, not plain text-to-speech —
+                  they need a short reference WAV of the target voice (and generate better with a
+                  transcript of it). Uploaded once, then reusable across requests.
+                </p>
+              </div>
+            </details>
+
             <button class="primary" id="audioSpeakBtn" type="button" style="margin-top:10px;">Generate speech</button>
             <audio id="audioSpeakPlayer" controls style="width:100%;margin-top:12px;display:none;"></audio>
             <p style="color:var(--muted);font-size:11.5px;margin-top:10px;line-height:1.5;">
@@ -600,7 +622,7 @@
           $('tab-logs').classList.toggle('hidden', tab !== 'logs');
           if (tab === 'models') loadModels();
           if (tab === 'catalog') loadCatalog();
-          if (tab === 'audio') loadAudioModels(); // populates the Speak/Transcribe datalists too
+          if (tab === 'audio') { loadAudioModels(); loadVoiceRefs(); } // populates the Speak/Transcribe datalists too
           if (tab === 'logs') startLogsStream();
         });
       });
@@ -2001,6 +2023,29 @@
       $('refreshAudioCatalog').addEventListener('click', loadAudioCatalog);
 
       // ---- Audio Speak / Transcribe ----
+      async function loadVoiceRefs() {
+        const select = $('audioVoiceRefSelect');
+        const current = select.value;
+        try {
+          const res = await fetch('/v1/audio-voice-refs');
+          const body = await res.json();
+          select.innerHTML = '<option value="">— none —</option>' + body.voiceRefs.map((v) =>
+            `<option value="${v.path}">${v.name} (${(v.size / 1024).toFixed(0)} KB)</option>`
+          ).join('');
+          if ([...select.options].some((o) => o.value === current)) select.value = current;
+        } catch {
+          // Non-fatal — the upload flow still works without the list.
+        }
+      }
+
+      // audiocpp_server doesn't take a reference WAV directly on a /v1/audio/speech
+      // request — cloning-only models (e.g. Chatterbox) need it pre-registered as a
+      // named "voice preset" in the model's model.json, then selected per-request via
+      // {"voice": "<name>"}. Cache which (model, voice ref path) pairs are already
+      // registered so repeated generations with the same reference don't re-PUT the
+      // manifest (each write restarts audiocpp_server) every single click.
+      const registeredVoicePresets = new Set();
+
       $('audioSpeakBtn').addEventListener('click', async () => {
         const model = $('audioSpeakModel').value.trim();
         const input = $('audioSpeakInput').value.trim();
@@ -2008,14 +2053,63 @@
         const btn = $('audioSpeakBtn');
         btn.disabled = true; btn.textContent = 'Generating…';
         try {
+          // A newly-chosen file takes priority over a previously uploaded
+          // reference — upload it now so we have a server-local path to register.
+          let voiceRef = $('audioVoiceRefSelect').value || undefined;
+          const file = $('audioVoiceRefFile').files[0];
+          if (file) {
+            const form = new FormData();
+            form.set('file', file);
+            const upRes = await fetch('/v1/audio-voice-refs', { method: 'POST', body: form });
+            const upBody = await upRes.json().catch(() => ({}));
+            if (!upRes.ok) throw new Error(upBody?.error?.message || 'Failed to upload voice reference');
+            voiceRef = upBody.voiceRefs[0].path;
+            $('audioVoiceRefFile').value = '';
+            await loadVoiceRefs();
+            $('audioVoiceRefSelect').value = voiceRef;
+          }
+          const referenceText = $('audioVoiceRefText').value.trim();
+
+          let voice;
+          if (voiceRef) {
+            // Stable, deterministic preset name derived from the reference file
+            // itself, so re-using the same WAV against the same model is a no-op.
+            const fileName = voiceRef.split('/').pop().replace(/\.[^.]+$/, '');
+            voice = 'ref-' + fileName;
+            const cacheKey = model + '|' + voiceRef;
+            if (!registeredVoicePresets.has(cacheKey)) {
+              btn.textContent = 'Registering voice…';
+              const presetRes = await fetch(`/v1/audio-models/${encodeURIComponent(model)}/voice-presets`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  name: voice,
+                  voice_ref: voiceRef,
+                  ...(referenceText ? { reference_text: referenceText } : {}),
+                }),
+              });
+              const presetBody = await presetRes.json().catch(() => ({}));
+              if (!presetRes.ok) {
+                throw new Error(presetBody?.error?.message || 'Failed to register voice reference');
+              }
+              registeredVoicePresets.add(cacheKey);
+              btn.textContent = 'Generating…';
+            }
+          }
+
           const res = await fetch('/v1/audio/speech', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model, input }),
+            body: JSON.stringify({
+              model, input,
+              ...(voice ? { voice } : {}),
+            }),
           });
           if (!res.ok) {
             const body = await res.json().catch(() => ({}));
-            throw new Error(body?.error?.message || res.statusText);
+            const msg = body?.error?.message || res.statusText;
+            const needsRef = /voice.?clon|voice.?conversion|reference audio|voice_ref|voice_id/i.test(msg);
+            throw new Error(needsRef ? `${msg} — add a voice reference below and try again.` : msg);
           }
           const blob = await res.blob();
           const player = $('audioSpeakPlayer');

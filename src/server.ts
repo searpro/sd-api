@@ -44,6 +44,7 @@ import { audioRoutes } from './routes/audio.js';
 import { audioModelRoutes } from './routes/audio-models.js';
 import { audioDownloadRoutes } from './routes/audio-downloads.js';
 import { audioCatalogRoutes } from './routes/audio-catalog.js';
+import { audioVoiceRefRoutes } from './routes/audio-voice-refs.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
@@ -211,6 +212,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(audioModelRoutes);
   await app.register(audioDownloadRoutes);
   await app.register(audioCatalogRoutes);
+  await app.register(audioVoiceRefRoutes);
 
   // Thin web UI (static, no build step). Served at "/"; API routes above take
   // precedence over the static wildcard. public/ sits next to src/ and dist/.

@@ -10,6 +10,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Writing a valid manifest below now triggers a real audiocpp_server
+  // restart (see routes/audio-models.ts) — stop it before closing so the
+  // spawned fake-audio-server child doesn't leak past the test run.
+  await app.audio.stop();
   await app.close();
 });
 
@@ -59,6 +63,57 @@ describe('audio-models (bundles)', () => {
       payload: { name: 'No family or task' },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('registers a voice preset via read-merge-write without clobbering the rest of the manifest', async () => {
+    await app.inject({ method: 'POST', url: '/v1/audio-models', payload: { model: 'clone-model' } });
+    await app.inject({
+      method: 'PUT',
+      url: '/v1/audio-models/clone-model/manifest',
+      payload: { name: 'Clone Model', family: 'chatterbox', task: 'clon' },
+    });
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/v1/audio-models/clone-model/voice-presets',
+      payload: { name: 'alice', voice_ref: '/data/alice.wav', reference_text: 'hello' },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().voicePresets).toEqual(['alice']);
+    expect(first.json().defaultVoicePreset).toBe('alice'); // first preset auto-becomes default
+
+    // A second preset merges in alongside the first rather than replacing it,
+    // and (without makeDefault) doesn't disturb the existing default.
+    const second = await app.inject({
+      method: 'POST',
+      url: '/v1/audio-models/clone-model/voice-presets',
+      payload: { name: 'bob', voice_ref: '/data/bob.wav' },
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json().voicePresets.sort()).toEqual(['alice', 'bob']);
+    expect(second.json().defaultVoicePreset).toBe('alice');
+
+    // family/task from the original manifest write survived both preset writes.
+    expect(second.json().model.family).toBe('chatterbox');
+    expect(second.json().model.task).toBe('clon');
+
+    const third = await app.inject({
+      method: 'POST',
+      url: '/v1/audio-models/clone-model/voice-presets',
+      payload: { name: 'bob', voice_ref: '/data/bob-v2.wav', makeDefault: true },
+    });
+    expect(third.json().defaultVoicePreset).toBe('bob');
+  });
+
+  it('rejects a voice preset on a model with no manifest yet', async () => {
+    await app.inject({ method: 'POST', url: '/v1/audio-models', payload: { model: 'no-manifest-yet' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/audio-models/no-manifest-yet/voice-presets',
+      payload: { name: 'alice', voice_ref: '/data/alice.wav' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_MODEL');
   });
 });
 

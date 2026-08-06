@@ -59,6 +59,45 @@ describe('Audio proxy — speech', () => {
     expect(typeof body.audio_base64).toBe('string');
   });
 
+  it('forwards voice_ref/reference_text for voice-cloning models (e.g. Chatterbox)', async () => {
+    const boundary = '----sdapitest-voiceref-speech';
+    const WAV = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74,
+      0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d,
+      0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const payload = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="ref.wav"\r\nContent-Type: audio/wav\r\n\r\n`,
+      ),
+      WAV,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const up = await fetch(`${baseUrl}/v1/audio-voice-refs`, {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      body: payload,
+    });
+    expect(up.status).toBe(201);
+    const { path: voiceRefPath } = (await up.json()).voiceRefs[0];
+
+    const res = await fetch(`${baseUrl}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'pocket-tts',
+        input: 'hello',
+        response_format: 'json',
+        voice_ref: voiceRefPath,
+        reference_text: 'hello',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.voice_ref).toBe(voiceRefPath);
+    expect(body.reference_text).toBe('hello');
+  });
+
   it('rejects a missing model/input with 400 before touching the upstream', async () => {
     const before = await (await fetch(`${app.audio.baseUrl}/__debug`)).json();
     const res = await fetch(`${baseUrl}/v1/audio/speech`, {

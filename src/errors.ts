@@ -27,6 +27,7 @@ export type ErrorCode =
   | 'AUDIO_STARTUP_FAILED'
   | 'AUDIO_SERVER_UNAVAILABLE'
   | 'AUDIO_UPSTREAM_ERROR'
+  | 'AUDIO_VOICE_REF_NOT_FOUND'
   | 'INTERNAL_ERROR';
 
 export class AppError extends Error {
@@ -81,5 +82,7 @@ export const errors = {
   audioStartupFailed: (msg: string) => new AppError('AUDIO_STARTUP_FAILED', msg, 500),
   audioServerUnavailable: (msg: string) => new AppError('AUDIO_SERVER_UNAVAILABLE', msg, 502),
   audioUpstreamError: (msg: string) => new AppError('AUDIO_UPSTREAM_ERROR', msg, 502),
+  audioVoiceRefNotFound: (name: string) =>
+    new AppError('AUDIO_VOICE_REF_NOT_FOUND', `Voice reference audio not found: ${name}`, 404),
   internal: (msg: string) => new AppError('INTERNAL_ERROR', msg, 500),
 };

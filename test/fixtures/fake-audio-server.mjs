@@ -90,7 +90,14 @@ const server = createServer(async (req, res) => {
     const body = await readBody(req).catch(() => ({}));
     if (body.response_format === 'json') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(
-        JSON.stringify({ model: body.model, audio_base64: FAKE_WAV.toString('base64') }),
+        JSON.stringify({
+          model: body.model,
+          audio_base64: FAKE_WAV.toString('base64'),
+          // Echoed back so tests can prove voice-cloning fields (passthrough
+          // fields not otherwise validated/reshaped) reached the upstream.
+          voice_ref: body.voice_ref ?? null,
+          reference_text: body.reference_text ?? null,
+        }),
       );
       return;
     }

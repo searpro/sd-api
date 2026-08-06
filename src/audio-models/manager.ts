@@ -10,6 +10,7 @@ import {
   type AudioBundleInfo,
   type AudioModelManifest,
   inspectAudioBundle,
+  readAudioManifest,
 } from './bundle.js';
 
 // audio.cpp model families ship weights (gguf/safetensors) plus, depending on
@@ -69,6 +70,17 @@ export class AudioModelManager implements ComponentPathResolver<AudioComponentTy
       return null;
     }
     return inspectAudioBundle(this.config.audioModelsDir, model);
+  }
+
+  /**
+   * Read the raw model.json manifest (including `voicePresets`, unlike
+   * `get()`'s `AudioBundleInfo` view, which only surfaces family/task).
+   * Returns null if the bundle has no manifest yet.
+   */
+  async getManifest(model: string): Promise<AudioModelManifest | null> {
+    assertSafeName(model);
+    const dir = safeResolve(this.config.audioModelsDir, model);
+    return readAudioManifest(dir);
   }
 
   /** Write (or replace) the bundle's model.json sidecar. Required: family + task. */

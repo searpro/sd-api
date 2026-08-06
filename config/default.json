@@ -28,11 +28,12 @@
   "audio_binary_path": "audiocpp_server",
   "audio_auto_install": true,
   "audio_install_dir": "./data/audio-bin",
-  "audio_releases_repo": "0xShug0/audio.cpp",
+  "audio_releases_repo": "searpro/audio.cpp",
   "audio_release_tag": "latest",
   "audio_accel": "cpu",
   "audio_models_dir": "./data/audio-models",
   "audio_port": 8091,
   "audio_startup_timeout_ms": 30000,
-  "audio_request_timeout_ms": 300000
+  "audio_request_timeout_ms": 300000,
+  "audio_voice_refs_dir": "./data/audio-voice-refs"
 }

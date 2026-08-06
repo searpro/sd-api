@@ -58,6 +58,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
   const audioModelsDir = join(root, 'audio-models');
   await mkdir(audioModelsDir, { recursive: true });
   const audioBinaryPath = await makeFakeAudioBinary(root);
+  const audioVoiceRefsDir = join(root, 'audio-voice-refs');
 
   return {
     sdBinaryPath,
@@ -100,6 +101,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     audioPort: 40000 + Math.floor(Math.random() * 20000),
     audioStartupTimeoutMs: 5000,
     audioRequestTimeoutMs: 300000,
+    audioVoiceRefsDir,
     ...overrides,
   };
 }
