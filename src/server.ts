@@ -23,6 +23,8 @@ import { LlmModelManager, type LlmComponentType } from './llm-models/manager.js'
 import { LlmCatalogManager } from './llm-catalog/manager.js';
 import { LogBuffer } from './logs/buffer.js';
 import { AudioServerManager } from './audio/server-manager.js';
+import { AudioModelManager, type AudioComponentType } from './audio-models/manager.js';
+import { AudioCatalogManager } from './audio-catalog/manager.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
@@ -39,6 +41,9 @@ import { llmDownloadRoutes } from './routes/llm-downloads.js';
 import { llmCatalogRoutes } from './routes/llm-catalog.js';
 import { logRoutes } from './routes/logs.js';
 import { audioRoutes } from './routes/audio.js';
+import { audioModelRoutes } from './routes/audio-models.js';
+import { audioDownloadRoutes } from './routes/audio-downloads.js';
+import { audioCatalogRoutes } from './routes/audio-catalog.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
@@ -92,6 +97,15 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   });
   const llmCatalog = new LlmCatalogManager(app.log);
   const audio = new AudioServerManager(config, app.log);
+  const audioModels = new AudioModelManager(config, app.log);
+  // audiocpp_server (like llama-server) only picks up its model registry at
+  // startup — regenerate the --config file and restart (debounced) once a
+  // download lands, so a newly-installed model becomes servable without a
+  // manual restart.
+  const audioDownloads = new DownloadManager<AudioComponentType>(config, audioModels, app.log, (task) => {
+    if (task.status === 'completed') audio.scheduleRestart();
+  });
+  const audioCatalog = new AudioCatalogManager(app.log);
   app.decorate('config', config);
   app.decorate('sd', sd);
   app.decorate('models', models);
@@ -104,6 +118,9 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   app.decorate('llmCatalog', llmCatalog);
   app.decorate('logs', logs);
   app.decorate('audio', audio);
+  app.decorate('audioModels', audioModels);
+  app.decorate('audioDownloads', audioDownloads);
+  app.decorate('audioCatalog', audioCatalog);
 
   // OpenAPI 3.1 docs (Phase 8).
   await app.register(fastifySwagger, {
@@ -135,8 +152,8 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         {
           name: 'audio',
           description:
-            'Audio generation (audio.cpp): OpenAI-style TTS/transcription (/v1/audio/*), ' +
-            'proxied to a locally-supervised audiocpp_server',
+            'Audio generation (audio.cpp): OpenAI-style TTS/transcription (/v1/audio/*), plus our ' +
+            'own model management (/v1/audio-models) and catalog (/v1/audio-catalog)',
         },
       ],
     },
@@ -191,6 +208,9 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(llmCatalogRoutes);
   await app.register(logRoutes);
   await app.register(audioRoutes);
+  await app.register(audioModelRoutes);
+  await app.register(audioDownloadRoutes);
+  await app.register(audioCatalogRoutes);
 
   // Thin web UI (static, no build step). Served at "/"; API routes above take
   // precedence over the static wildcard. public/ sits next to src/ and dist/.
@@ -203,6 +223,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   // Ensure runtime directories exist.
   await models.init();
   await llmModels.init();
+  await audioModels.init();
 
   return app;
 }

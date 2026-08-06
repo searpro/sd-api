@@ -9,6 +9,8 @@ import type { LlmModelManager, LlmComponentType } from './llm-models/manager.js'
 import type { LlmCatalogManager } from './llm-catalog/manager.js';
 import type { LogBuffer } from './logs/buffer.js';
 import type { AudioServerManager } from './audio/server-manager.js';
+import type { AudioModelManager, AudioComponentType } from './audio-models/manager.js';
+import type { AudioCatalogManager } from './audio-catalog/manager.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -24,5 +26,8 @@ declare module 'fastify' {
     llmCatalog: LlmCatalogManager;
     logs: LogBuffer;
     audio: AudioServerManager;
+    audioModels: AudioModelManager;
+    audioDownloads: DownloadManager<AudioComponentType>;
+    audioCatalog: AudioCatalogManager;
   }
 }
