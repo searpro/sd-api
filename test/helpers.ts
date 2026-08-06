@@ -91,6 +91,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     audioBinaryPath,
     audioAutoInstall: false,
     audioInstallDir: join(root, 'audio-bin'),
+    audioReleasesRepo: '0xShug0/audio.cpp',
     audioReleaseTag: 'latest',
     audioAccel: 'cpu',
     audioModelsDir,

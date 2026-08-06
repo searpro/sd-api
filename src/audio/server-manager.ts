@@ -109,7 +109,12 @@ export class AudioServerManager extends EventEmitter {
     }
 
     this.log.warn(
-      { binary: this.config.audioBinaryPath, accel: this.config.audioAccel, tag: this.config.audioReleaseTag },
+      {
+        binary: this.config.audioBinaryPath,
+        accel: this.config.audioAccel,
+        tag: this.config.audioReleaseTag,
+        releasesRepo: this.config.audioReleasesRepo,
+      },
       'audiocpp_server binary not found — attempting to download a prebuilt release',
     );
     const installer = new AudioInstaller(
@@ -117,6 +122,7 @@ export class AudioServerManager extends EventEmitter {
         installDir: this.config.audioInstallDir,
         releaseTag: this.config.audioReleaseTag,
         accel: this.config.audioAccel,
+        releasesRepo: this.config.audioReleasesRepo,
       },
       this.log,
     );
@@ -192,7 +198,24 @@ export class AudioServerManager extends EventEmitter {
     this.stderrTail = [];
     this.stopping = false;
 
-    const configPath = await writeAudioServerConfig(this.config, this.log);
+    const { path: configPath, modelIds } = await writeAudioServerConfig(this.config, this.log);
+
+    // Confirmed against the real binary: audiocpp_server exits immediately
+    // with "server config requires a non-empty models array" if none are
+    // registered — unlike llama-server, which is happy to start with zero
+    // GGUF files and just serves nothing until one appears. Skip the
+    // spawn/health-poll cycle entirely rather than treating a fresh install
+    // (no audio models yet) as a startup failure; ensureRunning()/start()
+    // resolve normally, status stays 'stopped', and the next scheduleRestart()
+    // after a model is installed retries with a non-empty config.
+    if (modelIds.length === 0) {
+      this._status = 'stopped';
+      this.log.info(
+        'no audio models registered (need a bundle with a valid model.json) — skipping audiocpp_server start',
+      );
+      return;
+    }
+
     const args = buildAudioServerArgs(configPath);
     this.log.info({ bin: this.config.audioBinaryPath, args }, 'spawning audiocpp_server');
 

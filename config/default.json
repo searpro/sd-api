@@ -28,6 +28,7 @@
   "audio_binary_path": "audiocpp_server",
   "audio_auto_install": true,
   "audio_install_dir": "./data/audio-bin",
+  "audio_releases_repo": "0xShug0/audio.cpp",
   "audio_release_tag": "latest",
   "audio_accel": "cpu",
   "audio_models_dir": "./data/audio-models",

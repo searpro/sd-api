@@ -307,6 +307,18 @@ both regenerates the registry and restarts in one step — a newly-downloaded
 model becomes servable without any change to the trigger point LLM already
 established.
 
+**Gotcha (confirmed by actually building and running the real binary, not
+just reading its docs) — `audiocpp_server` hard-refuses to start with an
+empty `models` array** (`"server config requires a non-empty models
+array"`, exit 1), unlike `llama-server`, which is perfectly happy to start
+with zero GGUF files and just serve an empty registry. `doStart()` checks
+`writeAudioServerConfig()`'s returned `modelIds` *before* spawning: if
+empty, it skips the spawn/health-poll cycle entirely, leaves `status`
+`'stopped'`, and returns normally rather than throwing — a fresh install
+with no audio models yet is an expected state, not a startup failure. The
+next `scheduleRestart()` after the first model's manifest lands regenerates
+a non-empty config and spawns for real.
+
 `src/routes/audio.ts` reverse-proxies the same way `routes/llm.ts` does
 (`fetch` → `pipeline(Readable.fromWeb(...), reply.raw)`, one code path for
 JSON/binary/SSE alike, `reply.raw` — not `req.raw` — is what abort-on-
@@ -330,12 +342,19 @@ have no need to inspect.
 
 **Binary install**: `src/audio/installer.ts` mirrors `LlamaInstaller`/
 `SdInstaller` exactly (stage → extract → chmod → atomic rename), reusing
-`selectAsset()` unchanged — but audio.cpp's releases are Windows-only as of
-this writing, so `selectAsset()` throwing on Linux/macOS is expected, not a
-bug; the installer wraps that error with a pointer at `scripts/build_linux.sh`
-(manual source build) rather than adding a CMake-invoking installer, which
-would be a materially bigger undertaking than "download a release zip" and
-isn't something either other backend does.
+`selectAsset()` unchanged — but upstream audio.cpp's releases are
+Windows-only as of this writing, so `selectAsset()` throwing on Linux/macOS
+against the default repo is expected, not a bug. Unlike `LlamaInstaller`/
+`SdInstaller`, the releases repo is configurable
+(`AudioInstallerConfig.releasesRepo`, defaulting to `0xShug0/audio.cpp`, set
+from `config.audioReleasesRepo`/`SD_AUDIO_RELEASES_REPO`) specifically so a
+fork/mirror publishing Linux/macOS builds can be pointed at without a code
+change, once one exists — confirmed viable by actually building from source
+(`scripts/build_linux.sh --backend cpu --native-cpu OFF --deployment-build`)
+and running the result against a real `AudioServerManager`; no CMake-invoking
+installer was added (a materially bigger undertaking than "download a
+release zip", and not something either other backend does), just this hook
+for wherever the eventual build ends up.
 
 ### Model management (`src/audio-models/`, `src/routes/audio-models.ts`, `src/routes/audio-downloads.ts`)
 

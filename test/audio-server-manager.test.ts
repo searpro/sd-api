@@ -3,6 +3,7 @@ import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AudioServerManager } from '../src/audio/server-manager.js';
 import { audioServerConfigPath } from '../src/audio/config-gen.js';
+import type { Config } from '../src/config.js';
 import { makeTestConfig } from './helpers.js';
 
 const log = { info() {}, warn() {}, debug() {}, error() {} } as never;
@@ -13,6 +14,22 @@ async function waitForStatus(get: () => string, want: string, ms = 5000): Promis
     if (Date.now() - start > ms) throw new Error(`timeout waiting for status "${want}", got "${get()}"`);
     await new Promise((r) => setTimeout(r, 25));
   }
+}
+
+/**
+ * Most tests below need at least one registrable model on disk: confirmed
+ * against the real audiocpp_server binary that it hard-refuses to start
+ * with an empty `models` array ("server config requires a non-empty models
+ * array"), so AudioServerManager.doStart() now skips spawning entirely in
+ * that case (see server-manager.ts) — a fresh, empty audioModelsDir alone
+ * is no longer enough to reach 'ready'.
+ */
+async function seedRegisteredModel(config: Config, id = 'pocket-tts'): Promise<void> {
+  await mkdir(join(config.audioModelsDir, id), { recursive: true });
+  await writeFile(
+    join(config.audioModelsDir, id, 'model.json'),
+    JSON.stringify({ family: 'pocket_tts', task: 'tts' }),
+  );
 }
 
 describe('AudioServerManager', () => {
@@ -26,6 +43,7 @@ describe('AudioServerManager', () => {
 
   it('transitions stopped -> starting -> ready and stop() kills the child', async () => {
     const config = await makeTestConfig();
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
     expect(manager.status).toBe('stopped');
 
@@ -42,9 +60,21 @@ describe('AudioServerManager', () => {
     await expect(fetch(`${manager.baseUrl}/health`)).rejects.toThrow();
   });
 
+  it('does not attempt to spawn when no audio models are registered', async () => {
+    const config = await makeTestConfig(); // audioModelsDir left empty
+    manager = new AudioServerManager(config, log);
+
+    await manager.start(); // must resolve, not throw
+    expect(manager.status).toBe('stopped');
+    expect(manager.isReady()).toBe(false);
+    // Nothing should actually be listening on baseUrl.
+    await expect(fetch(`${manager.baseUrl}/health`)).rejects.toThrow();
+  });
+
   it('surfaces AUDIO_STARTUP_FAILED when /health never becomes ready', async () => {
     process.env.FAKE_AUDIO_NO_HEALTH = '1';
     const config = await makeTestConfig({ audioStartupTimeoutMs: 800 });
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
 
     await expect(manager.start()).rejects.toThrow(/AUDIO_STARTUP_FAILED|Timed out/);
@@ -54,6 +84,7 @@ describe('AudioServerManager', () => {
 
   it('ensureRunning() is idempotent and does not double-spawn', async () => {
     const config = await makeTestConfig();
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
 
     await manager.ensureRunning();
@@ -68,6 +99,7 @@ describe('AudioServerManager', () => {
 
   it('coalesces concurrent start() callers into one spawn', async () => {
     const config = await makeTestConfig();
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
 
     const [a, b] = await Promise.all([manager.ensureRunning(), manager.ensureRunning()]);
@@ -85,6 +117,7 @@ describe('AudioServerManager', () => {
 
   it('restart() replaces the running process (new pid, still ready)', async () => {
     const config = await makeTestConfig();
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
 
     await manager.start();
@@ -99,6 +132,7 @@ describe('AudioServerManager', () => {
 
   it('scheduleRestart() debounces multiple calls into a single restart', async () => {
     const config = await makeTestConfig();
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
     await manager.start();
     expect(manager.status).toBe('ready');
@@ -114,6 +148,7 @@ describe('AudioServerManager', () => {
 
   it('scheduleRestart() cleared by stop() does not respawn after shutdown', async () => {
     const config = await makeTestConfig();
+    await seedRegisteredModel(config);
     manager = new AudioServerManager(config, log);
     await manager.start();
 
@@ -125,15 +160,25 @@ describe('AudioServerManager', () => {
     expect(manager.status).toBe('stopped');
   });
 
+  it('scheduleRestart() picks up the first model once one is installed (empty -> non-empty config)', async () => {
+    const config = await makeTestConfig(); // starts with zero models
+    manager = new AudioServerManager(config, log);
+    await manager.start();
+    expect(manager.status).toBe('stopped'); // skipped spawn, per the empty-config test above
+
+    await seedRegisteredModel(config);
+    manager.scheduleRestart(50);
+    await waitForStatus(() => manager!.status, 'ready');
+
+    const health = await fetch(`${manager.baseUrl}/health`);
+    expect(health.ok).toBe(true);
+  });
+
   it('regenerates the server config from model.json manifests before each start', async () => {
     const config = await makeTestConfig();
 
     // A registrable model (has a manifest) and one that should be skipped.
-    await mkdir(join(config.audioModelsDir, 'pocket-tts'), { recursive: true });
-    await writeFile(
-      join(config.audioModelsDir, 'pocket-tts', 'model.json'),
-      JSON.stringify({ family: 'pocket_tts', task: 'tts' }),
-    );
+    await seedRegisteredModel(config);
     await mkdir(join(config.audioModelsDir, 'no-manifest'), { recursive: true });
 
     manager = new AudioServerManager(config, log);

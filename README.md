@@ -606,18 +606,35 @@ component → writes `model.json` then enqueues the download(s) — plus a
 playground: type text and hear it back (`/v1/audio/speech`), or upload a
 file and see the transcript (`/v1/audio/transcriptions`).
 
-**Binary availability**: unlike stable-diffusion.cpp/llama.cpp, audio.cpp
-currently only publishes **Windows** prebuilt releases — `SD_AUDIO_AUTO_INSTALL`
-will fail with a clear error on Linux/macOS until upstream ships assets for
-those platforms. Build `audiocpp_server` from source in the meantime
-(`scripts/build_linux.sh` in the audio.cpp repo) and point
-`SD_AUDIO_BINARY_PATH` at the result.
+**Binary availability**: unlike stable-diffusion.cpp/llama.cpp, upstream
+audio.cpp (`0xShug0/audio.cpp`) currently only publishes **Windows**
+prebuilt releases — `SD_AUDIO_AUTO_INSTALL` will fail with a clear error on
+Linux/macOS until that changes. Confirmed by actually building it
+(`scripts/build_linux.sh`, GCC 13+/CMake) — it produces a working,
+self-contained binary (only depends on glibc/libstdc++/libgomp, no sibling
+shared lib to manage) — so `SD_AUDIO_RELEASES_REPO` lets the installer point
+at a fork/mirror that publishes Linux/macOS builds instead of upstream, with
+no code change. Until one exists, build from source and point
+`SD_AUDIO_BINARY_PATH` at the result; a ready-to-use GitHub Actions workflow
+for building+publishing both Linux (CPU) and macOS (Metal) releases from
+such a fork is not included in this repo but was drafted alongside this
+change (build with `--native-cpu OFF --deployment-build` — portable across
+host CPUs, and embeds `model_specs` so the binary runs standalone without
+the source checkout alongside it).
+
+**Gotcha confirmed against the real binary**: `audiocpp_server` refuses to
+start at all with an empty `models` array in its config (unlike
+`llama-server`, which is happy to start with zero GGUF files) — so
+`AudioServerManager` skips spawning entirely until at least one bundle has a
+valid `model.json`, rather than treating "no models installed yet" as a
+startup failure.
 
 | Env var | Config key | Default | Meaning |
 | ------- | ---------- | ------- | ------- |
 | `SD_AUDIO_BINARY_PATH` | `audio_binary_path` | `audiocpp_server` | Path to the binary (or a bare command on `PATH`) |
-| `SD_AUDIO_AUTO_INSTALL` | `audio_auto_install` | `true` | Download a prebuilt release if the binary is missing (Windows-only assets today — see above) |
+| `SD_AUDIO_AUTO_INSTALL` | `audio_auto_install` | `true` | Download a prebuilt release if the binary is missing (Windows-only assets upstream today — see above) |
 | `SD_AUDIO_INSTALL_DIR` | `audio_install_dir` | `./data/audio-bin` | Where downloaded binaries are unpacked |
+| `SD_AUDIO_RELEASES_REPO` | `audio_releases_repo` | `0xShug0/audio.cpp` | `owner/repo` to query for releases — override with a fork/mirror that publishes Linux/macOS builds |
 | `SD_AUDIO_RELEASE_TAG` | `audio_release_tag` | `latest` | Release to install (`latest` or a specific tag) |
 | `SD_AUDIO_ACCEL` | `audio_accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
 | `SD_AUDIO_MODELS_DIR` | `audio_models_dir` | `./data/audio-models` | Root scanned for `model.json`-registered bundles |
