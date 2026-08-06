@@ -1,7 +1,14 @@
 import { EventEmitter } from 'node:events';
 import type { DestinationStream } from 'pino';
 
-export type LogCategory = 'http' | 'healthcheck' | 'error' | 'sd-cli' | 'llama-server' | 'app';
+export type LogCategory =
+  | 'http'
+  | 'healthcheck'
+  | 'error'
+  | 'sd-cli'
+  | 'llama-server'
+  | 'audio-server'
+  | 'app';
 
 const LEVEL_LABELS: Record<number, string> = {
   10: 'trace',
@@ -79,6 +86,7 @@ export class LogBuffer extends EventEmitter implements DestinationStream {
   private categorize(record: LogRecord, reqId: string | undefined): LogCategory {
     if (record.err || record.level >= 50) return 'error';
     if (record.msg === 'llama-server') return 'llama-server';
+    if (record.msg === 'audio-server') return 'audio-server';
     if (record.msg === 'sd') return 'sd-cli';
 
     const res = record.res as { statusCode?: number } | undefined;

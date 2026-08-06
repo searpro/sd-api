@@ -22,6 +22,7 @@ import { LlamaServerManager } from './llm/server-manager.js';
 import { LlmModelManager, type LlmComponentType } from './llm-models/manager.js';
 import { LlmCatalogManager } from './llm-catalog/manager.js';
 import { LogBuffer } from './logs/buffer.js';
+import { AudioServerManager } from './audio/server-manager.js';
 import { AppError } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
@@ -37,6 +38,7 @@ import { llmModelRoutes } from './routes/llm-models.js';
 import { llmDownloadRoutes } from './routes/llm-downloads.js';
 import { llmCatalogRoutes } from './routes/llm-catalog.js';
 import { logRoutes } from './routes/logs.js';
+import { audioRoutes } from './routes/audio.js';
 import './types.js';
 
 export async function buildServer(config: Config): Promise<FastifyInstance> {
@@ -48,9 +50,18 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   // Widened to FastifyBaseLogger (not the concrete pino.Logger<...> type) so
   // TS infers Fastify's Logger generic as its default — otherwise every
   // route plugin (typed against the default FastifyInstance) stops matching.
+  // pino.multistream() defaults each stream entry to level 'info' unless
+  // told otherwise — it does NOT inherit the logger's own `level` below —
+  // so both destinations need it stated explicitly, or every debug() call
+  // (including the sd-cli/llama-server/audio-server child-process line
+  // forwarding LogBuffer.categorize() depends on) is silently dropped
+  // before it reaches either stdout or the buffer, regardless of logLevel.
   const pinoLogger: FastifyBaseLogger = pino(
     { level: config.logLevel },
-    pino.multistream([{ stream: process.stdout }, { stream: logs }]),
+    pino.multistream([
+      { stream: process.stdout, level: config.logLevel },
+      { stream: logs, level: config.logLevel },
+    ]),
   );
 
   const app = Fastify({
@@ -80,6 +91,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
     if (task.status === 'completed') llm.scheduleRestart();
   });
   const llmCatalog = new LlmCatalogManager(app.log);
+  const audio = new AudioServerManager(config, app.log);
   app.decorate('config', config);
   app.decorate('sd', sd);
   app.decorate('models', models);
@@ -91,6 +103,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   app.decorate('llmDownloads', llmDownloads);
   app.decorate('llmCatalog', llmCatalog);
   app.decorate('logs', logs);
+  app.decorate('audio', audio);
 
   // OpenAPI 3.1 docs (Phase 8).
   await app.register(fastifySwagger, {
@@ -119,6 +132,12 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
         },
         { name: 'system', description: 'Health & meta' },
         { name: 'logs', description: 'Live log viewer (in-memory ring buffer, tees stdout)' },
+        {
+          name: 'audio',
+          description:
+            'Audio generation (audio.cpp): OpenAI-style TTS/transcription (/v1/audio/*), ' +
+            'proxied to a locally-supervised audiocpp_server',
+        },
       ],
     },
     transform: jsonSchemaTransform,
@@ -171,6 +190,7 @@ export async function buildServer(config: Config): Promise<FastifyInstance> {
   await app.register(llmDownloadRoutes);
   await app.register(llmCatalogRoutes);
   await app.register(logRoutes);
+  await app.register(audioRoutes);
 
   // Thin web UI (static, no build step). Served at "/"; API routes above take
   // precedence over the static wildcard. public/ sits next to src/ and dist/.

@@ -42,6 +42,15 @@ const configFileSchema = z
     llm_gpu_layers: z.number().int().min(-1),
     llm_jinja: z.boolean(),
     llm_startup_timeout_ms: z.number().int().positive(),
+    audio_binary_path: z.string(),
+    audio_auto_install: z.boolean(),
+    audio_install_dir: z.string(),
+    audio_release_tag: z.string(),
+    audio_accel: z.enum(['cpu', 'vulkan', 'cuda', 'rocm']),
+    audio_models_dir: z.string(),
+    audio_port: z.number().int().positive(),
+    audio_startup_timeout_ms: z.number().int().positive(),
+    audio_request_timeout_ms: z.number().int().min(0),
   })
   .partial();
 
@@ -89,6 +98,26 @@ export interface Config {
   llmJinja: boolean;
   /** Max time to wait for llama-server's /health to become ready at startup. */
   llmStartupTimeoutMs: number;
+
+  // --- Audio generation (audio.cpp) ---
+  /** Path to the audiocpp_server binary (or a bare command on PATH). */
+  audioBinaryPath: string;
+  /** Download a prebuilt audiocpp_server release at startup if none is found. */
+  audioAutoInstall: boolean;
+  /** Where auto-installed audiocpp_server binaries are unpacked. */
+  audioInstallDir: string;
+  /** audio.cpp release tag to install ("latest" or a specific tag). */
+  audioReleaseTag: string;
+  /** Hardware backend to prefer when selecting an audio.cpp release asset. */
+  audioAccel: 'cpu' | 'vulkan' | 'cuda' | 'rocm';
+  /** Root directory holding per-model audio bundles (see src/audio/config-gen.ts). */
+  audioModelsDir: string;
+  /** Internal port audiocpp_server listens on (bound to 127.0.0.1 only). */
+  audioPort: number;
+  /** Max time to wait for audiocpp_server's /health to become ready at startup. */
+  audioStartupTimeoutMs: number;
+  /** Generated server config's busy_timeout_ms (0 disables the guard). */
+  audioRequestTimeoutMs: number;
 }
 
 function readJsonIfExists(path: string): Record<string, unknown> {
@@ -148,6 +177,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llm_gpu_layers: num(env.SD_LLM_GPU_LAYERS),
     llm_jinja: bool(env.SD_LLM_JINJA),
     llm_startup_timeout_ms: num(env.SD_LLM_STARTUP_TIMEOUT_MS),
+    audio_binary_path: env.SD_AUDIO_BINARY_PATH,
+    audio_auto_install: bool(env.SD_AUDIO_AUTO_INSTALL),
+    audio_install_dir: env.SD_AUDIO_INSTALL_DIR,
+    audio_release_tag: env.SD_AUDIO_RELEASE_TAG,
+    audio_accel: env.SD_AUDIO_ACCEL,
+    audio_models_dir: env.SD_AUDIO_MODELS_DIR,
+    audio_port: num(env.SD_AUDIO_PORT),
+    audio_startup_timeout_ms: num(env.SD_AUDIO_STARTUP_TIMEOUT_MS),
+    audio_request_timeout_ms: num(env.SD_AUDIO_REQUEST_TIMEOUT_MS),
   });
 
   const merged = { ...fileConfig, ...stripUndefined(envConfig) };
@@ -182,6 +220,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llmGpuLayers: parsed.llm_gpu_layers,
     llmJinja: parsed.llm_jinja,
     llmStartupTimeoutMs: parsed.llm_startup_timeout_ms,
+    audioBinaryPath: parsed.audio_binary_path,
+    audioAutoInstall: parsed.audio_auto_install,
+    audioInstallDir: resolve(process.cwd(), parsed.audio_install_dir),
+    audioReleaseTag: parsed.audio_release_tag,
+    audioAccel: parsed.audio_accel,
+    audioModelsDir: resolve(process.cwd(), parsed.audio_models_dir),
+    audioPort: parsed.audio_port,
+    audioStartupTimeoutMs: parsed.audio_startup_timeout_ms,
+    audioRequestTimeoutMs: parsed.audio_request_timeout_ms,
   };
 }
 
