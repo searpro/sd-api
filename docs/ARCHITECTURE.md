@@ -19,8 +19,9 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
 - **Services** (constructed once, shared): `SdWrapper`, `ModelManager`,
   `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`,
   `LlmModelManager`, a second `DownloadManager<LlmComponentType>` instance
-  (`app.llmDownloads`), `LlmCatalogManager`, `LogBuffer` (`app.logs`).
-  Augmented onto `FastifyInstance` in `src/types.ts`.
+  (`app.llmDownloads`), `LlmCatalogManager`, `LogBuffer` (`app.logs`),
+  `AudioServerManager` (`app.audio`). Augmented onto `FastifyInstance` in
+  `src/types.ts`.
 
 ## Request → image lifecycle
 
@@ -262,6 +263,72 @@ instance — without it, `app.close()` hangs indefinitely waiting for idle
 keep-alive sockets (e.g. an OpenAI client's connection pool against
 `/v1/llm/*`) to close on their own, which Node's default `server.close()`
 never forces.
+
+## Audio generation (`src/audio/`, `src/routes/audio.ts`)
+
+Same persistent-process-and-reverse-proxy shape as LLM serving, not
+`sd-cli`'s per-request spawn — `audiocpp_server` (audio.cpp) is itself a
+long-running HTTP server with OpenAI-audio-shaped endpoints
+(`/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/audio/voices`).
+`AudioServerManager` (`src/audio/server-manager.ts`) is `LlamaServerManager`
+copied almost line-for-line — same `startPromise` coalescing guard, same
+`/health` poll loop, same `SIGTERM`-then-`SIGKILL` stop, same
+non-restart-on-crash policy (the proxy's own `fetch()` failure is the source
+of truth for "is it up", not a pre-check).
+
+**The one real divergence**: `llama-server` auto-discovers GGUF files from
+`--models-dir`; `audiocpp_server` has no directory-scan equivalent — it loads
+an explicit JSON model registry via `--config`. `src/audio/config-gen.ts`
+generates that file by scanning `audioModelsDir` for bundles carrying a
+`model.json` manifest (`{family, task, mode?}` — information that can't be
+inferred from files alone, so an unregistered bundle is silently skipped,
+not fatal) and writes it to `<dirname(audioModelsDir)>/audio-server-config.generated.json`.
+`AudioServerManager.doStart()` calls this **before every spawn/restart**, so
+`scheduleRestart()` (same debounced-restart-after-download pattern as LLM)
+both regenerates the registry and restarts in one step — a newly-downloaded
+model becomes servable without any change to the trigger point LLM already
+established.
+
+`src/routes/audio.ts` reverse-proxies the same way `routes/llm.ts` does
+(`fetch` → `pipeline(Readable.fromWeb(...), reply.raw)`, one code path for
+JSON/binary/SSE alike, `reply.raw` — not `req.raw` — is what abort-on-
+disconnect must watch; see the LLM section above for why). One addition:
+
+**Multipart transcription uploads are forwarded raw, not re-parsed.**
+`@fastify/multipart` is registered globally (`server.ts`, for `/v1/inputs`),
+but content-type parsers are cloned per encapsulated plugin context (`fastify/
+lib/content-type-parser.js`'s `buildContentTypeParser()`), so `audioRoutes`
+can safely swap in a no-op parser for `multipart/form-data` scoped to just
+its own routes — `/v1/inputs` is unaffected. The clone already *contains*
+the inherited global parser at the point `audioRoutes` registers, though, so
+`addContentTypeParser()` alone throws `FST_ERR_CTP_ALREADY_PRESENT`;
+`removeContentTypeParser()` must run first in that same scope. With the
+no-op in place, the handler reads `req.raw` directly — still an unconsumed
+stream, since the parser never touched it — and forwards it as the upstream
+`fetch()`'s body via `Readable.toWeb(req.raw)` with `duplex: 'half'`, letting
+`audiocpp_server`'s own multipart parsing see the exact bytes the client
+sent (boundary and all) instead of us decoding and re-encoding a form we
+have no need to inspect.
+
+**Binary install**: `src/audio/installer.ts` mirrors `LlamaInstaller`/
+`SdInstaller` exactly (stage → extract → chmod → atomic rename), reusing
+`selectAsset()` unchanged — but audio.cpp's releases are Windows-only as of
+this writing, so `selectAsset()` throwing on Linux/macOS is expected, not a
+bug; the installer wraps that error with a pointer at `scripts/build_linux.sh`
+(manual source build) rather than adding a CMake-invoking installer, which
+would be a materially bigger undertaking than "download a release zip" and
+isn't something either other backend does.
+
+**Gotcha (found while wiring this up, not audio-specific) — `pino.multistream()`
+does not inherit the logger's own level.** `server.ts` builds the pino
+instance as `pino({ level: config.logLevel }, pino.multistream([...]))` to
+tee output to stdout and `LogBuffer`; each stream entry in that array
+defaults to level `'info'` unless given its own explicit `level`, silently
+overriding `config.logLevel` for *every* destination. In practice this meant
+`this.log.debug(...)` — which every child-process line (`sd-cli`,
+`llama-server`, and now `audio-server`) is logged at — never reached stdout
+*or* the log buffer, regardless of `SD_LOG_LEVEL`, even before this feature
+existed. Both stream entries now pass `level: config.logLevel` explicitly.
 
 ## Config (`src/config.ts`)
 

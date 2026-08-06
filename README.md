@@ -26,6 +26,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | LLM | OpenAI-compatible LLM/VLM serving via llama.cpp, streaming | `POST /v1/llm/chat/completions` |
 | LLM catalog | Guided LLM downloads (curated GGUF models, < 30B) | `GET /v1/llm-catalog` |
 | LLM models | LLM bundle management + background downloads | `GET /v1/llm-models` |
+| Audio | OpenAI-style TTS/transcription via audio.cpp (proxy) | `POST /v1/audio/speech` |
 
 ## Prerequisites
 
@@ -505,6 +506,79 @@ If `llama-server` fails to install or start, sd-api logs a warning and keeps
 serving image generation — `/v1/llm/*` requests fail with
 `LLM_SERVER_UNAVAILABLE` until it's fixed and the process restarted.
 
+## Audio generation (audio.cpp)
+
+sd-api also serves audio models — text-to-speech, voice cloning, and
+transcription — via an embedded
+[`audiocpp_server`](https://github.com/0xShug0/audio.cpp) process, exposed as
+an **OpenAI-audio-shaped** API at `/v1/audio/*`. Architecturally this follows
+the same reverse-proxy pattern as LLM serving above (a persistent,
+health-checked child process sd-api proxies to byte-for-byte) rather than the
+image side's per-request CLI spawn, since `audiocpp_server` — like
+`llama-server` — is itself a long-running HTTP server.
+
+One real difference from `llama-server`: `audiocpp_server` has no
+`--models-dir` auto-discovery. It loads an explicit model registry from a
+generated config file (`data/audio-server-config.generated.json`), rebuilt
+from every audio model bundle's `model.json` manifest (`family` + `task`)
+before each (re)start — a bundle without one isn't servable, since audio.cpp
+needs that information to pick the right loading code and none of it can be
+inferred from files alone:
+
+```
+<audioModelsDir>/
+  pocket-tts/
+    model.json          # {"family": "pocket_tts", "task": "tts"}
+    <weights...>
+```
+
+```bash
+curl -X POST localhost:3000/v1/audio/speech -H 'content-type: application/json' \
+  -o out.wav -d '{"model": "pocket-tts", "input": "Hello from sd-api."}'
+
+curl -X POST localhost:3000/v1/audio/transcriptions \
+  -F model=qwen3-asr -F file=@sample.wav
+
+curl 'localhost:3000/v1/audio/voices?model=pocket-tts'
+```
+
+| Endpoint | Notes |
+| --- | --- |
+| `POST /v1/audio/speech` | TTS; `audio/wav` by default, or `response_format:"json"` for base64, or streaming for `mode:"streaming"` models |
+| `POST /v1/audio/transcriptions` | JSON (`{"model","audio":"<server path>"}`) or multipart upload (OpenAI Whisper convention) |
+| `GET /v1/audio/voices` | Cached voice ids / configured presets for a TTS model |
+| `GET /v1/audio/models` | OpenAI-shape listing of currently configured models |
+| `POST /v1/audio/tasks/run` | Generic escape hatch for tasks without a dedicated route (voice conversion, music generation, source separation, ...) |
+
+**Model management and a guided catalog (`/v1/audio-models`, `/v1/audio-catalog`)
+are not built yet** — this is a Phase 1 integration (the proxy + process
+supervision only), following the same phased rollout LLM serving used. Until
+then, install a model by hand: create `<audioModelsDir>/<id>/`, drop the
+model's files in it, and write `model.json`.
+
+**Binary availability**: unlike stable-diffusion.cpp/llama.cpp, audio.cpp
+currently only publishes **Windows** prebuilt releases — `SD_AUDIO_AUTO_INSTALL`
+will fail with a clear error on Linux/macOS until upstream ships assets for
+those platforms. Build `audiocpp_server` from source in the meantime
+(`scripts/build_linux.sh` in the audio.cpp repo) and point
+`SD_AUDIO_BINARY_PATH` at the result.
+
+| Env var | Config key | Default | Meaning |
+| ------- | ---------- | ------- | ------- |
+| `SD_AUDIO_BINARY_PATH` | `audio_binary_path` | `audiocpp_server` | Path to the binary (or a bare command on `PATH`) |
+| `SD_AUDIO_AUTO_INSTALL` | `audio_auto_install` | `true` | Download a prebuilt release if the binary is missing (Windows-only assets today — see above) |
+| `SD_AUDIO_INSTALL_DIR` | `audio_install_dir` | `./data/audio-bin` | Where downloaded binaries are unpacked |
+| `SD_AUDIO_RELEASE_TAG` | `audio_release_tag` | `latest` | Release to install (`latest` or a specific tag) |
+| `SD_AUDIO_ACCEL` | `audio_accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
+| `SD_AUDIO_MODELS_DIR` | `audio_models_dir` | `./data/audio-models` | Root scanned for `model.json`-registered bundles |
+| `SD_AUDIO_PORT` | `audio_port` | `8091` | Internal port `audiocpp_server` listens on (`127.0.0.1` only, not exposed directly) |
+| `SD_AUDIO_STARTUP_TIMEOUT_MS` | `audio_startup_timeout_ms` | `30000` | How long to wait for `/health` before giving up |
+| `SD_AUDIO_REQUEST_TIMEOUT_MS` | `audio_request_timeout_ms` | `300000` | Generated config's `busy_timeout_ms` (how long a request waits for a busy model); `0` disables the guard |
+
+If `audiocpp_server` fails to install or start, sd-api logs a warning and
+keeps serving everything else — `/v1/audio/*` requests fail with
+`AUDIO_SERVER_UNAVAILABLE` until it's fixed and the process restarted.
+
 ## API overview
 
 ### `POST /v1/generate` — synchronous generation
@@ -622,7 +696,8 @@ Codes: `VALIDATION_ERROR`, `MODEL_NOT_FOUND`, `INVALID_MODEL`, `MISSING_WEIGHTS`
 `GENERATION_FAILED`, `PROCESS_TIMEOUT`, `BINARY_NOT_FOUND`, `JOB_NOT_FOUND`,
 `OUTPUT_NOT_FOUND`, `INPUT_NOT_FOUND`, `INVALID_PATH`, `DOWNLOAD_FAILED`,
 `LLM_BINARY_NOT_FOUND`, `LLM_STARTUP_FAILED`, `LLM_SERVER_UNAVAILABLE`,
-`LLM_UPSTREAM_ERROR`, `INTERNAL_ERROR`.
+`LLM_UPSTREAM_ERROR`, `AUDIO_BINARY_NOT_FOUND`, `AUDIO_STARTUP_FAILED`,
+`AUDIO_SERVER_UNAVAILABLE`, `AUDIO_UPSTREAM_ERROR`, `INTERNAL_ERROR`.
 
 ## Security (Spec section 5)
 
@@ -651,10 +726,11 @@ src/
   llm-models/       # LLM bundle resolver + manager (flat <id>/ layout)
   llm-catalog/      # curated LLM catalog (reuses catalog/hf.ts)
   logs/             # in-memory ring buffer tee'd from pino (buffer.ts)
-  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog, logs
+  audio/            # audiocpp_server process manager, generated server-config, installer
+  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog, logs, audio
   util/             # path safety, filename, validation
 public/             # thin web UI (single static index.html, no build step)
-test/               # vitest unit + integration tests (uses fake `sd`/`llama-server` binaries)
+test/               # vitest unit + integration tests (uses fake `sd`/`llama-server`/`audiocpp_server` binaries)
 ```
 
 ## Development
@@ -679,3 +755,11 @@ HuggingFace OAuth in the UI (Phase 2 of HF auth — token-from-env ships today).
 LLM serving: model management and a downloadable catalog now ship (see
 above); image-attach in the Chat UI and LoRA/restart-policy/preset support
 for `llama-server` remain planned follow-ups.
+
+Audio (audio.cpp): model management (`/v1/audio-models`) and a downloadable
+catalog (`/v1/audio-catalog`) are planned follow-ups, same rollout shape as
+LLM serving — install models by hand for now (see above). A web UI tab,
+auto-install once upstream ships Linux/macOS releases, and routes for
+audio.cpp's other tasks (voice conversion, music generation, source
+separation — reachable today via the generic `/v1/audio/tasks/run`) are
+further out.

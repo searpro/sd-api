@@ -44,9 +44,25 @@ async function main(): Promise<void> {
     );
   }
 
+  // Ensure a usable audiocpp_server binary exists and start it. Non-fatal,
+  // same posture as llama-server above — /v1/audio/* requests will surface a
+  // clean AUDIO_SERVER_UNAVAILABLE until it's fixed. Auto-install is
+  // expected to fail on Linux/macOS today (audio.cpp only publishes Windows
+  // prebuilt releases so far); see src/audio/installer.ts.
+  try {
+    await app.audio.ensureBinary();
+    await app.audio.start();
+  } catch (err) {
+    app.log.warn(
+      { err: (err as Error).message },
+      'audiocpp_server unavailable; /v1/audio/* requests will fail until it is installed/running',
+    );
+  }
+
   const close = async (signal: string) => {
     app.log.info({ signal }, 'shutting down');
     await app.llm.stop();
+    await app.audio.stop();
     await app.close();
     process.exit(0);
   };

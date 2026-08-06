@@ -23,6 +23,10 @@ export type ErrorCode =
   | 'LLM_STARTUP_FAILED'
   | 'LLM_SERVER_UNAVAILABLE'
   | 'LLM_UPSTREAM_ERROR'
+  | 'AUDIO_BINARY_NOT_FOUND'
+  | 'AUDIO_STARTUP_FAILED'
+  | 'AUDIO_SERVER_UNAVAILABLE'
+  | 'AUDIO_UPSTREAM_ERROR'
   | 'INTERNAL_ERROR';
 
 export class AppError extends Error {
@@ -72,5 +76,10 @@ export const errors = {
   llmStartupFailed: (msg: string) => new AppError('LLM_STARTUP_FAILED', msg, 500),
   llmServerUnavailable: (msg: string) => new AppError('LLM_SERVER_UNAVAILABLE', msg, 502),
   llmUpstreamError: (msg: string) => new AppError('LLM_UPSTREAM_ERROR', msg, 502),
+  audioBinaryNotFound: (path: string) =>
+    new AppError('AUDIO_BINARY_NOT_FOUND', `audiocpp_server binary not found: ${path}`, 500),
+  audioStartupFailed: (msg: string) => new AppError('AUDIO_STARTUP_FAILED', msg, 500),
+  audioServerUnavailable: (msg: string) => new AppError('AUDIO_SERVER_UNAVAILABLE', msg, 502),
+  audioUpstreamError: (msg: string) => new AppError('AUDIO_UPSTREAM_ERROR', msg, 502),
   internal: (msg: string) => new AppError('INTERNAL_ERROR', msg, 500),
 };

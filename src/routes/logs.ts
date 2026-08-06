@@ -2,7 +2,15 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-const categorySchema = z.enum(['http', 'healthcheck', 'error', 'sd-cli', 'llama-server', 'app']);
+const categorySchema = z.enum([
+  'http',
+  'healthcheck',
+  'error',
+  'sd-cli',
+  'llama-server',
+  'audio-server',
+  'app',
+]);
 
 // Passthrough: pino records carry arbitrary bindings (req, res, err, line,
 // responseTime, ...) depending on what logged them — no fixed shape to
