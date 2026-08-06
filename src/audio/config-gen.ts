@@ -124,22 +124,31 @@ export function audioServerConfigPath(config: Config): string {
   return resolve(dirname(config.audioModelsDir), 'audio-server-config.generated.json');
 }
 
+export interface WrittenAudioServerConfig {
+  path: string;
+  modelIds: string[];
+}
+
 /**
  * Write the current server config to disk, creating parent dirs as needed.
  * Called before every spawn/restart so newly-installed models (and their
- * manifests) become servable without a manual process restart.
+ * manifests) become servable without a manual process restart. Returns the
+ * registered model ids alongside the path so the caller can decide whether
+ * there's anything to actually spawn for — confirmed against the real
+ * binary that `audiocpp_server --config ...` hard-refuses to start at all
+ * with an empty `models` array ("server config requires a non-empty models
+ * array"), unlike llama-server's auto-discovery (which is happy to start
+ * with zero GGUF files and simply serves nothing until one appears).
  */
 export async function writeAudioServerConfig(
   config: Config,
   log: FastifyBaseLogger,
-): Promise<string> {
+): Promise<WrittenAudioServerConfig> {
   const path = audioServerConfigPath(config);
   const serverConfig = await buildAudioServerConfig(config, log);
+  const modelIds = serverConfig.models.map((m) => m.id);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(serverConfig, null, 2), 'utf8');
-  log.info(
-    { path, models: serverConfig.models.map((m) => m.id) },
-    'wrote audiocpp_server config',
-  );
-  return path;
+  log.info({ path, models: modelIds }, 'wrote audiocpp_server config');
+  return { path, modelIds };
 }

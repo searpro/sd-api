@@ -45,6 +45,7 @@ const configFileSchema = z
     audio_binary_path: z.string(),
     audio_auto_install: z.boolean(),
     audio_install_dir: z.string(),
+    audio_releases_repo: z.string(),
     audio_release_tag: z.string(),
     audio_accel: z.enum(['cpu', 'vulkan', 'cuda', 'rocm']),
     audio_models_dir: z.string(),
@@ -106,6 +107,12 @@ export interface Config {
   audioAutoInstall: boolean;
   /** Where auto-installed audiocpp_server binaries are unpacked. */
   audioInstallDir: string;
+  /**
+   * "owner/repo" to query for audio.cpp releases. Defaults to upstream,
+   * which as of this writing only publishes Windows assets — override with
+   * a fork/mirror that publishes Linux/macOS builds once one exists.
+   */
+  audioReleasesRepo: string;
   /** audio.cpp release tag to install ("latest" or a specific tag). */
   audioReleaseTag: string;
   /** Hardware backend to prefer when selecting an audio.cpp release asset. */
@@ -180,6 +187,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     audio_binary_path: env.SD_AUDIO_BINARY_PATH,
     audio_auto_install: bool(env.SD_AUDIO_AUTO_INSTALL),
     audio_install_dir: env.SD_AUDIO_INSTALL_DIR,
+    audio_releases_repo: env.SD_AUDIO_RELEASES_REPO,
     audio_release_tag: env.SD_AUDIO_RELEASE_TAG,
     audio_accel: env.SD_AUDIO_ACCEL,
     audio_models_dir: env.SD_AUDIO_MODELS_DIR,
@@ -223,6 +231,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     audioBinaryPath: parsed.audio_binary_path,
     audioAutoInstall: parsed.audio_auto_install,
     audioInstallDir: resolve(process.cwd(), parsed.audio_install_dir),
+    audioReleasesRepo: parsed.audio_releases_repo,
     audioReleaseTag: parsed.audio_release_tag,
     audioAccel: parsed.audio_accel,
     audioModelsDir: resolve(process.cwd(), parsed.audio_models_dir),
