@@ -425,6 +425,6 @@ tests that construct a `Config` directly (see `test/helpers.ts`).
   fastify.withTypeProvider<ZodTypeProvider>(); app.get(...) }`, registered in
   `server.ts`, with zod `schema` (tags/summary/body/response) and a test.
 - Services take `(config, …deps, log: FastifyBaseLogger)`.
-- Reuse: `errors.*`, `safeResolve`/`assertSafeName`, `uniqueImageName`,
+- Reuse: `errors.*`, `safeResolve`/`assertSafeName`, `uniqueOutputName`,
   `parseProgress`, `DownloadManager` for any new downloadable artifact.
 - In-memory state only (unless explicitly asked otherwise).

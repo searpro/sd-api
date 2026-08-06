@@ -70,7 +70,7 @@ Generation flow: route → `jobs.create()` → `sd.generate()` →
   sparse and purposeful (see existing files).
 - New endpoint = a route plugin in `src/routes/`, registered in `server.ts`,
   with zod schemas and a test in `test/`. See the `/new-route` command.
-- Reuse helpers: `safeResolve`/`assertSafeName`, `errors.*`, `uniqueImageName`,
+- Reuse helpers: `safeResolve`/`assertSafeName`, `errors.*`, `uniqueOutputName`,
   `parseProgress`. Don't reimplement.
 
 ## Testing

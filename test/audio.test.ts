@@ -59,6 +59,50 @@ describe('Audio proxy — speech', () => {
     expect(typeof body.audio_base64).toBe('string');
   });
 
+  it('saves a plain WAV generation into outputsDir and serves it back via /v1/outputs', async () => {
+    const res = await fetch(`${baseUrl}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'pocket-tts', input: 'save me' }),
+    });
+    expect(res.status).toBe(200);
+    const outputName = res.headers.get('x-output-name');
+    expect(outputName).toMatch(/\.wav$/);
+    const generatedBytes = new Uint8Array(await res.arrayBuffer());
+
+    const out = await fetch(`${baseUrl}/v1/outputs/${outputName}`);
+    expect(out.status).toBe(200);
+    expect(out.headers.get('content-type')).toBe('audio/wav');
+    const savedBytes = new Uint8Array(await out.arrayBuffer());
+    expect(savedBytes).toEqual(generatedBytes);
+  });
+
+  it('saves the decoded audio when response_format is "json" too', async () => {
+    const res = await fetch(`${baseUrl}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'pocket-tts', input: 'save me json', response_format: 'json' }),
+    });
+    const outputName = res.headers.get('x-output-name');
+    expect(outputName).toMatch(/\.wav$/);
+    const body = await res.json();
+
+    const out = await fetch(`${baseUrl}/v1/outputs/${outputName}`);
+    expect(out.status).toBe(200);
+    const savedBase64 = Buffer.from(await out.arrayBuffer()).toString('base64');
+    expect(savedBase64).toBe(body.audio_base64);
+  });
+
+  it('does not save a streaming speech request (no X-Output-Name header)', async () => {
+    const res = await fetch(`${baseUrl}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'pocket-tts', input: 'hi', stream_format: 'audio' }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-output-name')).toBeNull();
+  });
+
   it('forwards voice_ref/reference_text for voice-cloning models (e.g. Chatterbox)', async () => {
     const boundary = '----sdapitest-voiceref-speech';
     const WAV = Buffer.from([

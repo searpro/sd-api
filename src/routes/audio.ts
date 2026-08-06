@@ -2,8 +2,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { errors } from '../errors.js';
+import { safeResolve } from '../util/paths.js';
+import { uniqueOutputName } from '../util/filename.js';
 
 /**
  * OpenAI-audio-shaped reverse proxy to a locally-supervised `audiocpp_server`
@@ -103,6 +106,80 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
     await relay(req, reply, upstream, controller);
   }
 
+  /**
+   * Like proxyToAudio, but for non-streaming /v1/audio/speech requests:
+   * buffers the full response (these are small — seconds of speech), writes
+   * a copy into outputsDir alongside generated images (same directory the
+   * image side already uses — see src/sd/wrapper.ts), then relays the
+   * already-buffered bytes to the client with an `X-Output-Name` header so
+   * callers/the UI can fetch it again later via GET /v1/outputs/:name.
+   * Streaming requests (stream_format: sse|audio) skip this — chunk
+   * boundaries would need real bookkeeping — and fall back to proxyToAudio.
+   */
+  async function proxyToAudioSpeechAndSave(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const controller = new AbortController();
+    reply.raw.on('close', () => {
+      if (!reply.raw.writableEnded) controller.abort();
+    });
+
+    let upstream: Response;
+    try {
+      upstream = await fetch(`${app.audio.baseUrl}/v1/audio/speech`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      throw errors.audioServerUnavailable(
+        `Could not reach audiocpp_server at ${app.audio.baseUrl}: ${(err as Error).message}`,
+      );
+    }
+
+    if (!upstream.ok) {
+      // Error responses are small JSON — no output to save, relay unchanged.
+      await relay(req, reply, upstream, controller);
+      return;
+    }
+
+    const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream';
+    const buf = Buffer.from(await upstream.arrayBuffer());
+
+    let outputName: string | undefined;
+    try {
+      let audioBytes: Buffer | undefined;
+      if (contentType.startsWith('audio/')) {
+        audioBytes = buf;
+      } else if (contentType.includes('application/json')) {
+        // response_format:"json" — audiocpp_server returns {"audio":"<base64>","format":"wav",...}.
+        const parsed = JSON.parse(buf.toString('utf8')) as {
+          audio?: string;
+          audio_base64?: string;
+          format?: string;
+        };
+        const b64 = parsed.audio ?? parsed.audio_base64;
+        if (typeof b64 === 'string') audioBytes = Buffer.from(b64, 'base64');
+      }
+      if (audioBytes) {
+        await mkdir(app.config.outputsDir, { recursive: true });
+        outputName = uniqueOutputName('wav');
+        await writeFile(safeResolve(app.config.outputsDir, outputName), audioBytes);
+      }
+    } catch (err) {
+      req.log.warn({ err: (err as Error).message }, 'failed to persist generated audio to outputs dir');
+    }
+
+    reply.header('content-type', contentType);
+    if (outputName) reply.header('X-Output-Name', outputName);
+    reply.code(upstream.status);
+    return reply.send(buf);
+  }
+
   async function relay(
     req: FastifyRequest,
     reply: FastifyReply,
@@ -155,11 +232,20 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
         description:
           'Returns audio/wav by default; set response_format:"json" for base64 WAV, or ' +
           'stream_format:"sse"/"audio" for a streaming-capable model. The request body is ' +
-          'forwarded to audiocpp_server unmodified.',
+          'forwarded to audiocpp_server unmodified. Non-streaming responses are also saved into ' +
+          'outputsDir (see GET /v1/outputs/:name) — the saved filename comes back as the ' +
+          '`X-Output-Name` response header.',
         body: speechSchema,
       },
     },
-    async (req, reply) => proxyToAudio(req, reply, '/v1/audio/speech', 'POST', req.body),
+    async (req, reply) => {
+      const body = req.body as Record<string, unknown>;
+      const streaming = body.stream_format === 'sse' || body.stream_format === 'audio' || body.stream === true;
+      if (streaming) {
+        return proxyToAudio(req, reply, '/v1/audio/speech', 'POST', body);
+      }
+      return proxyToAudioSpeechAndSave(req, reply, body);
+    },
   );
 
   app.post(

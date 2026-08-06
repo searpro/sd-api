@@ -130,7 +130,7 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_RELEASE_TAG` | `release_tag` | `latest` | Release to install (`latest` or a specific tag) |
 | `SD_ACCEL` | `accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
 | `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root holding per-model bundle directories |
-| `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images |
+| `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images and (non-streaming) generated speech audio |
 | `SD_HOST` / `SD_PORT` | `host` / `port` | `0.0.0.0` / `3000` | Listen address |
 | `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `2` | Generation queue concurrency |
 | `SD_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `2` | Download queue concurrency |
@@ -549,7 +549,7 @@ curl 'localhost:3000/v1/audio/voices?model=pocket-tts'
 
 | Endpoint | Notes |
 | --- | --- |
-| `POST /v1/audio/speech` | TTS; `audio/wav` by default, or `response_format:"json"` for base64, or streaming for `mode:"streaming"` models |
+| `POST /v1/audio/speech` | TTS; `audio/wav` by default, or `response_format:"json"` for base64, or streaming for `mode:"streaming"` models. Non-streaming responses are saved into `outputsDir` (alongside generated images) — the saved filename comes back as the `X-Output-Name` response header, fetchable again via `GET /v1/outputs/:name`. Streaming (`stream_format`/`stream`) isn't persisted. |
 | `POST /v1/audio/transcriptions` | JSON (`{"model","audio":"<server path>"}`) or multipart upload (OpenAI Whisper convention) |
 | `GET /v1/audio/voices` | Cached voice ids / configured presets for a TTS model |
 | `GET /v1/audio/models` | OpenAI-shape listing of currently configured models |

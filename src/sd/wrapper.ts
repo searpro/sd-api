@@ -12,7 +12,7 @@ import { parseProgress, type StepProgress } from './progress.js';
 import { SdInstaller } from './installer.js';
 import { resolveBundle } from '../models/bundle.js';
 import { safeResolve } from '../util/paths.js';
-import { uniqueImageName } from '../util/filename.js';
+import { uniqueOutputName } from '../util/filename.js';
 import { spawnEnv } from '../util/spawn-env.js';
 import { errors, AppError } from '../errors.js';
 
@@ -156,7 +156,7 @@ export class SdWrapper extends EventEmitter {
         : undefined,
     };
 
-    const imageName = uniqueImageName('png');
+    const imageName = uniqueOutputName('png');
     const outputPath = safeResolve(this.config.outputsDir, imageName);
 
     const args = buildArgs({ params: effective, bundle, outputPath, images });

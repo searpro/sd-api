@@ -2111,9 +2111,12 @@
             const needsRef = /voice.?clon|voice.?conversion|reference audio|voice_ref|voice_id/i.test(msg);
             throw new Error(needsRef ? `${msg} — add a voice reference below and try again.` : msg);
           }
-          const blob = await res.blob();
+          // Non-streaming generations are saved server-side (see /v1/outputs) —
+          // point the player there so it survives a reload, falling back to a
+          // throwaway blob URL only if that header is missing (e.g. streaming).
+          const outputName = res.headers.get('x-output-name');
           const player = $('audioSpeakPlayer');
-          player.src = URL.createObjectURL(blob);
+          player.src = outputName ? `/v1/outputs/${outputName}` : URL.createObjectURL(await res.blob());
           player.style.display = '';
           player.play().catch(() => {});
         } catch (e) {
