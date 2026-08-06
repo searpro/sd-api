@@ -170,6 +170,7 @@
       <button class="tab" data-tab="catalog">Catalog</button>
       <button class="tab" data-tab="models">Models</button>
       <button class="tab" data-tab="llm">LLM</button>
+      <button class="tab" data-tab="audio">Audio</button>
       <button class="tab" data-tab="logs">Logs</button>
     </div>
 
@@ -411,6 +412,124 @@
         </div>
       </section>
 
+      <!-- AUDIO -->
+      <section id="tab-audio" class="hidden">
+        <div class="subtabs">
+          <button class="subtab active" data-subtab="audio-play">Speak / Transcribe</button>
+          <button class="subtab" data-subtab="audio-models">Models</button>
+          <button class="subtab" data-subtab="audio-catalog">Catalog</button>
+        </div>
+
+        <div id="subtab-audio-play" class="grid">
+          <div class="panel">
+            <h2>Speak</h2>
+            <label for="audioSpeakModel">Model</label>
+            <input id="audioSpeakModel" list="audioTtsModelIds" placeholder="model id (see the Models sub-tab)" required />
+            <datalist id="audioTtsModelIds"></datalist>
+            <label for="audioSpeakInput">Text</label>
+            <textarea id="audioSpeakInput" placeholder="Text to speak…" required></textarea>
+            <button class="primary" id="audioSpeakBtn" type="button" style="margin-top:10px;">Generate speech</button>
+            <audio id="audioSpeakPlayer" controls style="width:100%;margin-top:12px;display:none;"></audio>
+            <p style="color:var(--muted);font-size:11.5px;margin-top:10px;line-height:1.5;">
+              Install a TTS model from the <strong>Catalog</strong> sub-tab, then enter its id here —
+              served OpenAI-style at <code>/v1/audio/speech</code>.
+            </p>
+          </div>
+
+          <div class="panel">
+            <h2>Transcribe</h2>
+            <label for="audioAsrModel">Model</label>
+            <input id="audioAsrModel" list="audioAsrModelIds" placeholder="model id (see the Models sub-tab)" required />
+            <datalist id="audioAsrModelIds"></datalist>
+            <label for="audioAsrFile">Audio file</label>
+            <input id="audioAsrFile" type="file" accept="audio/*" required />
+            <button class="primary" id="audioAsrBtn" type="button" style="margin-top:10px;">Transcribe</button>
+            <pre class="log" id="audioAsrResult" style="margin-top:12px;min-height:80px;"></pre>
+            <p style="color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.5;">
+              Uploaded as <code>multipart/form-data</code> — served OpenAI (Whisper)-style at
+              <code>/v1/audio/transcriptions</code>.
+            </p>
+          </div>
+        </div>
+
+        <!-- AUDIO MODELS -->
+        <div id="subtab-audio-models" class="grid hidden">
+          <div class="panel">
+            <h2>Add component</h2>
+            <p style="color:var(--muted);font-size:12px;margin:0 0 4px;">
+              Each audio model is a bundle of files (weights, plus any family-specific tokenizer/
+              vocoder/embedding files) directly under <code>&lt;audioModelsDir&gt;/&lt;id&gt;/</code>.
+            </p>
+            <form id="audioDlForm">
+              <label for="audioDlModel">Model name</label>
+              <input id="audioDlModel" list="audioModelList" placeholder="e.g. pocket-tts" required />
+              <datalist id="audioModelList"></datalist>
+              <label for="audioDlType">Component</label>
+              <select id="audioDlType">
+                <option value="weights">weights</option>
+                <option value="aux">aux (tokenizer / vocoder / embeddings)</option>
+              </select>
+              <label for="audioDlUrl">URL</label>
+              <input id="audioDlUrl" type="url" placeholder="https://…/file.gguf" required />
+              <label for="audioDlName">Filename (optional)</label>
+              <input id="audioDlName" placeholder="inferred from URL" />
+              <button class="primary" id="audioDlBtn" type="submit">Download into bundle</button>
+            </form>
+
+            <form id="audioManifestForm" style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px;">
+              <label for="audioManModel">Register / update manifest</label>
+              <input id="audioManModel" list="audioModelList" placeholder="model name" required />
+              <div class="row" style="margin-top:8px;">
+                <div>
+                  <label for="audioManFamily">Family</label>
+                  <input id="audioManFamily" placeholder="e.g. pocket_tts" required />
+                </div>
+                <div>
+                  <label for="audioManTask">Task</label>
+                  <input id="audioManTask" placeholder="e.g. tts, asr" required />
+                </div>
+              </div>
+              <p style="color:var(--muted);font-size:11px;margin:6px 0 0;">
+                Required for audiocpp_server to load this bundle — see <code>model_specs/&lt;family&gt;.json</code>
+                in the audio.cpp repo for valid family ids. Installing from the Catalog sets this automatically.
+              </p>
+              <button class="ghost" id="audioManBtn" type="submit" style="margin-top:8px;">Save manifest</button>
+            </form>
+          </div>
+
+          <div class="panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <h2 style="margin:0;">Installed audio models</h2>
+              <button class="ghost" id="refreshAudioModels" type="button">Refresh</button>
+            </div>
+            <div id="audioModelCards"></div>
+            <div class="empty hidden" id="audioModelsEmpty">No audio models installed yet.</div>
+          </div>
+        </div>
+
+        <!-- AUDIO CATALOG -->
+        <div id="subtab-audio-catalog" class="grid hidden">
+          <div class="panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <h2 style="margin:0;">Audio catalog</h2>
+              <button class="ghost" id="refreshAudioCatalog" type="button">Refresh</button>
+            </div>
+            <p style="color:var(--muted);font-size:12px;margin:0 0 10px;">
+              Curated audio.cpp models (TTS/ASR). Installing writes the family/task manifest
+              automatically, then downloads the chosen files.
+            </p>
+            <div id="audioCatalogList"></div>
+          </div>
+
+          <div class="panel">
+            <h2 id="audioCatalogDetailTitle">Select a model</h2>
+            <div id="audioCatalogDetail">
+              <span class="hint" style="color:var(--muted)">Choose a model from the list to configure its download.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- LOGS -->
       <section id="tab-logs" class="hidden">
         <div class="panel">
@@ -477,14 +596,17 @@
           $('tab-catalog').classList.toggle('hidden', tab !== 'catalog');
           $('tab-models').classList.toggle('hidden', tab !== 'models');
           $('tab-llm').classList.toggle('hidden', tab !== 'llm');
+          $('tab-audio').classList.toggle('hidden', tab !== 'audio');
           $('tab-logs').classList.toggle('hidden', tab !== 'logs');
           if (tab === 'models') loadModels();
           if (tab === 'catalog') loadCatalog();
+          if (tab === 'audio') loadAudioModels(); // populates the Speak/Transcribe datalists too
           if (tab === 'logs') startLogsStream();
         });
       });
 
-      // ---- LLM sub-tabs ----
+      // ---- LLM / Audio sub-tabs (shared handler — panel ids are distinct, so
+      // toggling every known id per click is harmless even across groups) ----
       document.querySelectorAll('.subtab').forEach((btn) => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.subtab').forEach((b) => b.classList.remove('active'));
@@ -493,8 +615,13 @@
           $('subtab-chat').classList.toggle('hidden', sub !== 'chat');
           $('subtab-llm-models').classList.toggle('hidden', sub !== 'llm-models');
           $('subtab-llm-catalog').classList.toggle('hidden', sub !== 'llm-catalog');
+          $('subtab-audio-play').classList.toggle('hidden', sub !== 'audio-play');
+          $('subtab-audio-models').classList.toggle('hidden', sub !== 'audio-models');
+          $('subtab-audio-catalog').classList.toggle('hidden', sub !== 'audio-catalog');
           if (sub === 'llm-models') loadLlmModels();
           if (sub === 'llm-catalog') loadLlmCatalog();
+          if (sub === 'audio-models') loadAudioModels();
+          if (sub === 'audio-catalog') loadAudioCatalog();
         });
       });
 
@@ -1535,6 +1662,395 @@
 
       $('refreshLlmCatalog').addEventListener('click', loadLlmCatalog);
 
+      // ---- Audio Models ----
+      function audioFileRow(model, type, file) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;';
+        const left = document.createElement('div');
+        left.innerHTML = '<span class="pill">' + type + '</span> ' + file.name +
+          ' <span style="color:var(--muted)">· ' + fmtSize(file.size) + '</span>';
+        const del = document.createElement('button');
+        del.className = 'danger'; del.textContent = '✕';
+        del.title = 'Delete file';
+        del.onclick = () => deleteAudioComponent(model, type, file.name);
+        row.append(left, del);
+        return row;
+      }
+
+      function audioDownloadRow(model, task) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);';
+        const statusColor = task.status === 'failed' ? 'var(--danger)' : task.status === 'completed' ? 'var(--accent-2)' : 'var(--muted)';
+        const top = document.createElement('div');
+        top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        top.innerHTML = '<span><span class="pill">' + task.type + '</span> ' + task.name +
+          ' <span style="color:' + statusColor + ';font-size:11px">· ' + task.status + (task.resumed ? ' (resumed)' : '') + '</span></span>';
+        const actions = document.createElement('span');
+        if (task.status === 'downloading' || task.status === 'queued') {
+          const c = document.createElement('button'); c.className = 'ghost'; c.textContent = 'Cancel';
+          c.onclick = async () => { try { await api('/v1/audio-downloads/' + task.id + '/cancel', { method: 'POST' }); refreshAudioModelsSoon(); } catch (e) { toast(e.message, true); } };
+          actions.appendChild(c);
+        } else if (task.status === 'failed' || task.status === 'cancelled') {
+          const r = document.createElement('button'); r.className = 'ghost'; r.textContent = 'Resume';
+          r.onclick = async () => { try { await api('/v1/audio-downloads/' + task.id + '/retry', { method: 'POST' }); ensureAudioDownloadPolling(); refreshAudioModelsSoon(); } catch (e) { toast(e.message, true); } };
+          const x = document.createElement('button'); x.className = 'danger'; x.textContent = 'Discard';
+          x.onclick = async () => { try { await api('/v1/audio-downloads/' + task.id + '?discard=true', { method: 'DELETE' }); refreshAudioModelsSoon(); } catch (e) { toast(e.message, true); } };
+          actions.append(r, x);
+        }
+        top.appendChild(actions);
+        row.appendChild(top);
+        if (task.status === 'downloading' || task.status === 'queued') {
+          const bar = document.createElement('div');
+          bar.innerHTML = progressBarHtml(task.received, task.total);
+          row.appendChild(bar);
+        } else if (task.error) {
+          const e = document.createElement('div'); e.style.cssText = 'font-size:11px;color:var(--danger);margin-top:2px;'; e.textContent = task.error;
+          row.appendChild(e);
+        }
+        return row;
+      }
+
+      function audioPartialRow(model, p) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        const pct = p.total ? Math.round((p.received / p.total) * 100) + '%' : fmtSize(p.received);
+        const left = document.createElement('div');
+        left.innerHTML = '<span class="pill">' + p.type + '</span> ' + p.name +
+          ' <span style="color:var(--muted);font-size:11px">· partial ' + pct + '</span>';
+        const acts = document.createElement('span');
+        const r = document.createElement('button'); r.className = 'ghost'; r.textContent = 'Resume';
+        r.onclick = async () => {
+          try { await api('/v1/audio-downloads/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, type: p.type, name: p.name }) }); ensureAudioDownloadPolling(); refreshAudioModelsSoon(); }
+          catch (e) { toast(e.message, true); }
+        };
+        acts.appendChild(r);
+        row.append(left, acts);
+        return row;
+      }
+
+      let audioModelsRefreshTimer = null;
+      function refreshAudioModelsSoon() { clearTimeout(audioModelsRefreshTimer); audioModelsRefreshTimer = setTimeout(loadAudioModels, 300); }
+
+      async function loadAudioModels() {
+        try {
+          const [{ models }, dl] = await Promise.all([api('/v1/audio-models'), api('/v1/audio-downloads')]);
+          const downloads = dl.downloads || [];
+          const byModel = {};
+          downloads.forEach((t) => { (byModel[t.model] = byModel[t.model] || []).push(t); });
+
+          $('audioModelList').innerHTML = models.map((m) => '<option value="' + m.id + '">').join('');
+          $('audioTtsModelIds').innerHTML = models.filter((m) => m.ready && m.task === 'tts').map((m) => '<option value="' + m.id + '">').join('');
+          $('audioAsrModelIds').innerHTML = models.filter((m) => m.ready && m.task === 'asr').map((m) => '<option value="' + m.id + '">').join('');
+
+          const wrap = $('audioModelCards');
+          wrap.innerHTML = '';
+          $('audioModelsEmpty').classList.toggle('hidden', models.length > 0 || downloads.length > 0);
+
+          const known = new Set(models.map((m) => m.id));
+          Object.keys(byModel).forEach((id) => { if (!known.has(id)) models.push({ id, name: id, family: null, task: null, files: [], ready: false, partials: [] }); });
+
+          models.forEach((m) => {
+            const card = document.createElement('div');
+            card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:var(--panel-2);';
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
+            const badge = m.ready
+              ? '<span class="pill" style="border-color:var(--accent-2);color:#7ee2a8">' + m.task + '</span>'
+              : '<span class="pill" style="border-color:var(--danger);color:#f5a8a3">' + (m.family ? 'no files' : 'no manifest') + '</span>';
+            head.innerHTML = '<strong>' + m.name + '</strong> ' + badge + (m.family ? ' <span class="pill">' + m.family + '</span>' : '');
+            const delAll = document.createElement('button');
+            delAll.className = 'danger'; delAll.textContent = 'Delete model';
+            delAll.onclick = () => deleteAudioModel(m.id);
+            head.appendChild(delAll);
+            card.appendChild(head);
+
+            (m.files || []).forEach((f) => card.appendChild(audioFileRow(m.id, 'weights', f)));
+
+            const active = (byModel[m.id] || []).filter((t) => t.status !== 'completed');
+            active.forEach((t) => card.appendChild(audioDownloadRow(m.id, t)));
+
+            const activeNames = new Set(active.map((t) => t.type + '/' + t.name));
+            (m.partials || []).forEach((p) => { if (!activeNames.has(p.type + '/' + p.name)) card.appendChild(audioPartialRow(m.id, p)); });
+
+            if (!(m.files || []).length && !active.length && (!m.partials || !m.partials.length)) {
+              const e = document.createElement('div'); e.style.cssText = 'color:var(--muted);font-size:12px;'; e.textContent = 'Empty bundle — add weights.';
+              card.appendChild(e);
+            }
+            wrap.appendChild(card);
+          });
+        } catch (e) { toast(e.message, true); }
+      }
+
+      let audioDownloadPoller = null;
+      function ensureAudioDownloadPolling() {
+        if (audioDownloadPoller) return;
+        audioDownloadPoller = setInterval(async () => {
+          try {
+            const { downloads } = await api('/v1/audio-downloads');
+            const anyActive = downloads.some((t) => t.status === 'downloading' || t.status === 'queued');
+            if ($('subtab-audio-models') && !$('subtab-audio-models').classList.contains('hidden')) loadAudioModels();
+            if (!anyActive) { clearInterval(audioDownloadPoller); audioDownloadPoller = null; }
+          } catch { /* keep polling */ }
+        }, 1200);
+      }
+
+      async function deleteAudioModel(id) {
+        if (!confirm('Delete audio model "' + id + '" and all its files?')) return;
+        try {
+          await api('/v1/audio-models/' + encodeURIComponent(id), { method: 'DELETE' });
+          toast('Deleted ' + id);
+          loadAudioModels();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      async function deleteAudioComponent(model, type, name) {
+        if (!confirm('Delete "' + name + '" from ' + model + '?')) return;
+        try {
+          await api('/v1/audio-models/' + encodeURIComponent(model) + '/' + type + '/' + encodeURIComponent(name), { method: 'DELETE' });
+          toast('Deleted ' + name);
+          loadAudioModels();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      $('audioDlForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+          model: $('audioDlModel').value.trim(),
+          type: $('audioDlType').value,
+          url: $('audioDlUrl').value,
+        };
+        const name = $('audioDlName').value.trim();
+        if (name) payload.name = name;
+        $('audioDlBtn').disabled = true; $('audioDlBtn').textContent = 'Queuing…';
+        try {
+          const task = await api('/v1/audio-models/download', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          toast('Download queued: ' + task.name);
+          $('audioDlUrl').value = ''; $('audioDlName').value = '';
+          ensureAudioDownloadPolling();
+          loadAudioModels();
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          $('audioDlBtn').disabled = false; $('audioDlBtn').textContent = 'Download into bundle';
+        }
+      });
+
+      $('audioManifestForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const model = $('audioManModel').value.trim();
+        $('audioManBtn').disabled = true;
+        try {
+          await api('/v1/audio-models/' + encodeURIComponent(model) + '/manifest', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ family: $('audioManFamily').value.trim(), task: $('audioManTask').value.trim() }),
+          });
+          toast('Manifest saved for ' + model);
+          loadAudioModels();
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          $('audioManBtn').disabled = false;
+        }
+      });
+
+      $('refreshAudioModels').addEventListener('click', loadAudioModels);
+
+      // ---- Audio Catalog ----
+      let audioCatalogModels = [];
+
+      async function loadAudioCatalog() {
+        try {
+          const { models } = await api('/v1/audio-catalog');
+          audioCatalogModels = models;
+          renderAudioCatalogList();
+        } catch (e) { toast(e.message, true); }
+      }
+
+      function renderAudioCatalogList() {
+        const list = $('audioCatalogList');
+        list.innerHTML = '';
+        audioCatalogModels.forEach((m) => {
+          const card = document.createElement('div');
+          card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel-2);cursor:pointer;';
+          card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + m.task + '</span> <span class="pill">' + m.family + '</span>' +
+            '<div style="color:var(--muted);font-size:12px;margin-top:3px;">' + (m.description || '') + '</div>';
+          card.onclick = () => { document.querySelectorAll('#audioCatalogList > div').forEach(d => d.style.borderColor = 'var(--border)'); card.style.borderColor = 'var(--accent)'; selectAudioCatalogModel(m.id); };
+          list.appendChild(card);
+        });
+      }
+
+      async function selectAudioCatalogModel(id) {
+        const model = audioCatalogModels.find((m) => m.id === id);
+        $('audioCatalogDetailTitle').textContent = model.name;
+        const detail = $('audioCatalogDetail');
+        detail.innerHTML = '<span style="color:var(--muted)">Loading available files from HuggingFace…</span>';
+        let data;
+        try {
+          data = await api('/v1/audio-catalog/' + encodeURIComponent(id) + '/files');
+        } catch (e) { detail.innerHTML = '<span style="color:var(--danger)">' + e.message + '</span>'; return; }
+
+        detail.innerHTML = '';
+        const nameWrap = document.createElement('div');
+        nameWrap.innerHTML = '<label>Install as (bundle name)</label>';
+        const nameInput = document.createElement('input');
+        nameInput.id = 'audioCatName'; nameInput.value = id;
+        nameWrap.appendChild(nameInput);
+        detail.appendChild(nameWrap);
+
+        const selectors = []; // {role, required, getChoice}
+        data.components.forEach((c) => {
+          const box = document.createElement('div');
+          box.style.cssText = 'border-top:1px solid var(--border);margin-top:12px;padding-top:10px;';
+          box.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:6px;">' + c.label +
+            ' <span class="pill">' + c.role + '</span>' + (c.required ? '' : ' <span style="color:var(--muted);font-size:11px">optional</span>') + '</div>';
+
+          if (!c.files || c.files.length === 0) {
+            box.innerHTML += '<div style="color:var(--danger);font-size:12px;">Unavailable: ' + (c.error || 'no files found') + '</div>';
+            detail.appendChild(box);
+            selectors.push({ role: c.role, required: c.required, getChoice: () => null });
+            return;
+          }
+
+          const fileSel = document.createElement('select');
+          c.files.forEach((file, i) => {
+            const o = document.createElement('option');
+            o.value = i;
+            o.textContent = (file.quant || file.filename) + ' · ' + fmtSize(file.size);
+            fileSel.appendChild(o);
+          });
+          const qc = document.createElement('div'); qc.innerHTML = '<label>' + (c.quantizable ? 'Quantization' : 'File') + '</label>'; qc.appendChild(fileSel);
+          box.appendChild(qc);
+          detail.appendChild(box);
+          selectors.push({ role: c.role, required: c.required, getChoice: () => c.files[Number(fileSel.value)] || null });
+        });
+
+        const installBtn = document.createElement('button');
+        installBtn.className = 'primary'; installBtn.textContent = 'Download & install';
+        installBtn.onclick = () => installAudioCatalogModel(model, nameInput.value.trim(), selectors, installBtn);
+        detail.appendChild(installBtn);
+
+        const status = document.createElement('div');
+        status.id = 'audioCatStatus'; status.style.cssText = 'margin-top:10px;font-size:12px;color:var(--muted);';
+        detail.appendChild(status);
+      }
+
+      async function installAudioCatalogModel(model, name, selectors, btn) {
+        if (!name) { toast('Enter a bundle name', true); return; }
+        const chosen = selectors.map((s) => ({ ...s, file: s.getChoice() })).filter((s) => s.file);
+        const missingRequired = selectors.filter((s) => s.required && !s.getChoice());
+        if (missingRequired.length) { toast('Missing files for: ' + missingRequired.map((s) => s.role).join(', '), true); return; }
+
+        btn.disabled = true;
+        const status = $('audioCatStatus');
+        try {
+          status.textContent = 'Writing manifest…';
+          await api('/v1/audio-models/' + encodeURIComponent(name) + '/manifest', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: model.name, family: model.family, task: model.task, mode: model.mode }),
+          });
+
+          const ids = [];
+          for (const s of chosen) {
+            const task = await api('/v1/audio-models/download', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ model: name, type: s.role, url: s.file.url, name: s.file.filename }),
+            });
+            ids.push(task.id);
+          }
+          toast('Queued ' + ids.length + ' download(s) for ' + name);
+          ensureAudioDownloadPolling();
+          pollAudioCatalogInstall(name, ids, status, btn);
+        } catch (e) {
+          status.textContent = '';
+          toast('Install failed: ' + e.message, true);
+          btn.disabled = false;
+        }
+      }
+
+      async function pollAudioCatalogInstall(model, ids, status, btn) {
+        const tick = async () => {
+          let tasks;
+          try { tasks = (await api('/v1/audio-downloads?model=' + encodeURIComponent(model))).downloads.filter((t) => ids.includes(t.id)); }
+          catch { return setTimeout(tick, 1500); }
+          status.innerHTML = '';
+          tasks.forEach((t) => {
+            const d = document.createElement('div');
+            d.style.cssText = 'margin-bottom:6px;';
+            const pct = t.total ? Math.round((t.received / t.total) * 100) + '%' : fmtSize(t.received);
+            d.innerHTML = '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>' + t.name + '</span><span>' + t.status + ' · ' + pct + '</span></div>' +
+              ((t.status === 'downloading' || t.status === 'queued') ? progressBarHtml(t.received, t.total) : '') +
+              (t.error ? '<div style="color:var(--danger);font-size:11px;">' + t.error + '</div>' : '');
+            status.appendChild(d);
+          });
+          const done = tasks.length > 0 && tasks.every((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
+          if (!done) { setTimeout(tick, 1200); return; }
+          btn.disabled = false;
+          const failed = tasks.filter((t) => t.status !== 'completed');
+          if (failed.length === 0) toast('Installed ' + model);
+          else toast(failed.length + ' download(s) failed — resume from the Audio Models tab', true);
+          loadAudioModels();
+        };
+        tick();
+      }
+
+      $('refreshAudioCatalog').addEventListener('click', loadAudioCatalog);
+
+      // ---- Audio Speak / Transcribe ----
+      $('audioSpeakBtn').addEventListener('click', async () => {
+        const model = $('audioSpeakModel').value.trim();
+        const input = $('audioSpeakInput').value.trim();
+        if (!model || !input) { toast('Enter a model and some text', true); return; }
+        const btn = $('audioSpeakBtn');
+        btn.disabled = true; btn.textContent = 'Generating…';
+        try {
+          const res = await fetch('/v1/audio/speech', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model, input }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body?.error?.message || res.statusText);
+          }
+          const blob = await res.blob();
+          const player = $('audioSpeakPlayer');
+          player.src = URL.createObjectURL(blob);
+          player.style.display = '';
+          player.play().catch(() => {});
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          btn.disabled = false; btn.textContent = 'Generate speech';
+        }
+      });
+
+      $('audioAsrBtn').addEventListener('click', async () => {
+        const model = $('audioAsrModel').value.trim();
+        const file = $('audioAsrFile').files[0];
+        if (!model || !file) { toast('Enter a model and choose a file', true); return; }
+        const btn = $('audioAsrBtn');
+        btn.disabled = true; btn.textContent = 'Transcribing…';
+        $('audioAsrResult').textContent = '';
+        try {
+          const form = new FormData();
+          form.set('model', model);
+          form.set('file', file);
+          const res = await fetch('/v1/audio/transcriptions', { method: 'POST', body: form });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body?.error?.message || res.statusText);
+          $('audioAsrResult').textContent = body.text || JSON.stringify(body);
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          btn.disabled = false; btn.textContent = 'Transcribe';
+        }
+      });
+
       // ---- Logs ----
       const LOG_CAT_COLOR = {
         http: 'var(--accent)',
@@ -1653,6 +2169,7 @@
       checkHealth();
       loadCheckpoints();
       loadLlmModels(); // populates the Chat model datalist too
+      loadAudioModels(); // populates the Speak/Transcribe model datalists too
       setInterval(checkHealth, 15000);
     </script>
   </body>

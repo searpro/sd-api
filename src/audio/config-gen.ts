@@ -1,28 +1,10 @@
-import { readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
+import { readdir, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config.js';
+import { readAudioManifest, type AudioModelManifest } from '../audio-models/bundle.js';
 
-/**
- * Unlike `llama-server` (which auto-discovers GGUF files from
- * `--models-dir`), `audiocpp_server` loads an explicit JSON registry that
- * names each model's `family` (which loading code to use) and `task`
- * (tts/asr/...) — information that can't be inferred from files on disk.
- * This sidecar is where that gets recorded; a future AudioModelManager
- * (model management/catalog phase) is expected to write it automatically
- * from catalog metadata, same as `model.json` already works for image and
- * LLM bundles. Until then it can be hand-authored.
- */
-export interface AudioModelManifest {
-  family: string;
-  task: string;
-  mode?: 'offline' | 'streaming';
-  loadOptions?: Record<string, unknown>;
-  sessionOptions?: Record<string, unknown>;
-  defaultVoicePreset?: unknown;
-  voicePresets?: Record<string, unknown>;
-  busyTimeoutMs?: number;
-}
+export type { AudioModelManifest } from '../audio-models/bundle.js';
 
 interface AudioServerModelEntry {
   id: string;
@@ -46,28 +28,31 @@ export interface AudioServerConfig {
   models: AudioServerModelEntry[];
 }
 
-async function readManifest(
+/** Wraps the shared AudioModelManifest reader (audio-models/bundle.ts) with
+ * warn-and-skip semantics — a missing/invalid manifest shouldn't fail the
+ * whole server config, just leave that one model unregistered. */
+async function readManifestOrSkip(
   dir: string,
   id: string,
   log: FastifyBaseLogger,
 ): Promise<AudioModelManifest | null> {
+  let manifest: AudioModelManifest | null;
   try {
-    const raw = await readFile(join(dir, 'model.json'), 'utf8');
-    return JSON.parse(raw) as AudioModelManifest;
+    manifest = await readAudioManifest(dir);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      log.warn(
-        { model: id },
-        'audio model has no model.json manifest (family/task) — skipping server registration',
-      );
-      return null;
-    }
     log.warn(
       { model: id, err: (err as Error).message },
       'invalid audio model.json — skipping server registration',
     );
     return null;
   }
+  if (!manifest) {
+    log.warn(
+      { model: id },
+      'audio model has no model.json manifest (family/task) — skipping server registration',
+    );
+  }
+  return manifest;
 }
 
 /**
@@ -103,7 +88,7 @@ export async function buildAudioServerConfig(
   for (const d of dirents) {
     if (d.name.startsWith('.') || !d.isDirectory()) continue;
     const dir = join(config.audioModelsDir, d.name);
-    const manifest = await readManifest(dir, d.name, log);
+    const manifest = await readManifestOrSkip(dir, d.name, log);
     if (!manifest) continue;
     models.push({
       id: d.name,

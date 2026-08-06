@@ -20,8 +20,10 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
   `JobManager`, `DownloadManager`, `CatalogManager`, `LlamaServerManager`,
   `LlmModelManager`, a second `DownloadManager<LlmComponentType>` instance
   (`app.llmDownloads`), `LlmCatalogManager`, `LogBuffer` (`app.logs`),
-  `AudioServerManager` (`app.audio`). Augmented onto `FastifyInstance` in
-  `src/types.ts`.
+  `AudioServerManager` (`app.audio`), `AudioModelManager`
+  (`app.audioModels`), a third `DownloadManager<AudioComponentType>`
+  instance (`app.audioDownloads`), `AudioCatalogManager`
+  (`app.audioCatalog`). Augmented onto `FastifyInstance` in `src/types.ts`.
 
 ## Request → image lifecycle
 
@@ -130,7 +132,7 @@ for the replay burst + live tail), except it subscribes to one shared
 `LogBuffer` instance rather than a `Map<id, EventEmitter>` — there's no
 per-resource id here, just one process-wide log stream.
 
-## Catalog (`src/catalog/`, `src/llm-catalog/`)
+## Catalog (`src/catalog/`, `src/llm-catalog/`, `src/audio-catalog/`)
 
 `catalog/data.ts` is a curated `CatalogModel[]` (txt2img + edit image models).
 `catalog/manager.ts` returns summaries (`list()`), full entries (`get()`), and
@@ -174,6 +176,22 @@ regardless of role:
   only to `role === 'gguf'` (weights) responses, same as the pre-existing
   `isMmproj()` (`llm-models/bundle.ts`) filter it sits alongside — without
   both, either could surface as a bogus "weights" option.
+
+`audio-catalog/` is the same shape again, smaller still (4 entries to start —
+spans TTS and ASR, deliberately not attempting audio.cpp's full 40+ family
+surface at once). All four point into audio.cpp's own community GGUF
+mono-repo, `audio-cpp/audio.cpp-gguf` — one repo, per-family sub-folders —
+verified against that repo's real file listing rather than guessed, same
+diligence bar as the LLM catalog's repo ids. Each `AudioCatalogModel` carries
+`family`/`task` (and optional `mode`) directly, matching the exact
+`model_specs/<family>.json` identifiers from the audio.cpp repo (confirmed
+from source, not inferred) — `AudioCatalogManager` doesn't need `hf.ts`
+extended at all, since `listComponentFiles()` was already generic; only the
+shard-exclusion filter carries over (defensively — no sharded audio.cpp GGUF
+package has actually been observed), since there's no mmproj/draft-file
+equivalent on the audio side. The install flow (UI and API) writes the
+catalog entry's `family`/`task` into `model.json` automatically — unlike a
+hand-authored install, the user never has to know or type them.
 
 ## HuggingFace auth (`src/util/hf-auth.ts`)
 
@@ -318,6 +336,44 @@ bug; the installer wraps that error with a pointer at `scripts/build_linux.sh`
 (manual source build) rather than adding a CMake-invoking installer, which
 would be a materially bigger undertaking than "download a release zip" and
 isn't something either other backend does.
+
+### Model management (`src/audio-models/`, `src/routes/audio-models.ts`, `src/routes/audio-downloads.ts`)
+
+`AudioModelManager` (`src/audio-models/manager.ts`) is `LlmModelManager`
+copied structurally — flat `<audioModelsDir>/<id>/<files...>` layout,
+`implements ComponentPathResolver<AudioComponentType>` so it plugs straight
+into the existing generic `DownloadManager<TType>` as its third domain (image
+models, LLM models, now audio models — no changes needed to `DownloadManager`
+or the resolver interface itself, exactly the "one generic engine, N
+domains" the Downloads section above describes). `AudioComponentType =
+'weights' | 'aux'` — deliberately coarser than the LLM side's `'gguf' |
+'mmproj'`, since audio.cpp families vary widely in what auxiliary files they
+need (tokenizer/vocoder/speaker-embedding), so there's no single second role
+worth naming; `bundle.ts`'s `AudioBundleInfo` reflects this by listing every
+real file generically (`files: AudioComponentFile[]`) rather than picking out
+"the weights file" the way `inspectLlmBundle()` does for `.gguf`.
+
+**The one real divergence from `LlmModelManager`**: `model.json` is
+*required*, not an optional display-name sidecar — `writeManifest()` rejects
+a manifest missing `family`/`task` (`errors.invalidModel`, mirrored at the
+route layer by a required zod schema), since those two fields are what
+`config-gen.ts` (above) needs to ever register the bundle. `fileNameFor()`
+also refuses the literal filename `"model.json"` (case-insensitive) — without
+that guard, a component download with an attacker- or mistake-supplied
+`name` could silently overwrite the manifest sidecar it lives next to.
+
+`AudioModelManager`'s `ALLOWED_EXT` is broader than the LLM side's
+GGUF-only set (`.gguf`, `.safetensors`, `.json`, `.bin`, `.pt`, `.txt`) to
+cover the heterogeneous auxiliary files real families need — archive
+extraction (`.zip`/`.tar.gz`) is explicitly not supported, since
+`DownloadManager` has no post-download processing step; a catalog entry
+whose package requires one simply isn't a fit for this app today.
+
+`src/server.ts` wires a second `DownloadManager<AudioComponentType>`
+instance (`app.audioDownloads`) with the same `onSettle` → `scheduleRestart()`
+hook LLM downloads use, and `routes/audio-models.ts` / `routes/audio-downloads.ts`
+mirror their `llm-models.ts` / `llm-downloads.ts` counterparts endpoint for
+endpoint.
 
 **Gotcha (found while wiring this up, not audio-specific) — `pino.multistream()`
 does not inherit the logger's own level.** `server.ts` builds the pino

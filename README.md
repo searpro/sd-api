@@ -104,14 +104,19 @@ A dependency-free, single-file frontend is served at `/` (no build step —
   component, then download + install as a bundle in one click.
 - **Models** — list installed models with size/type, delete them, and
   download new components (checkpoint/vae/clip) by URL into a model bundle.
+- **LLM** — chat against any installed model (streaming), install more from
+  the LLM catalog, and manage LLM bundles — three sub-tabs mirroring the
+  Generate/Catalog/Models flow above for `llama-server`.
+- **Audio** — a Speak/Transcribe playground (type text and hear it back, or
+  upload a file and see the transcript), plus Models and Catalog sub-tabs for
+  audio.cpp — same install flow as the LLM tab.
 - **Logs** — a live tail of the app's own logs (requests, errors,
-  health-checks, `sd-cli`/`llama-server` child-process output), filterable by
-  category, so terminal-only NDJSON isn't the only way to see what's
-  happening. See [Live logs](#live-logs-v1logs) below.
+  health-checks, `sd-cli`/`llama-server`/`audio-server` child-process
+  output), filterable by category, so terminal-only NDJSON isn't the only way
+  to see what's happening. See [Live logs](#live-logs-v1logs) below.
 
-It uses only the public endpoints (`/v1/jobs`, `/v1/jobs/:id/stream`,
-`/v1/models`, `/v1/outputs/...`, `/v1/logs`, `/v1/logs/stream`), so it works
-against any deployment.
+It talks to the same public API documented throughout this file (jobs,
+models, LLM, audio, logs, ...), so it works against any deployment.
 
 ## Configuration (Phase 7)
 
@@ -550,11 +555,56 @@ curl 'localhost:3000/v1/audio/voices?model=pocket-tts'
 | `GET /v1/audio/models` | OpenAI-shape listing of currently configured models |
 | `POST /v1/audio/tasks/run` | Generic escape hatch for tasks without a dedicated route (voice conversion, music generation, source separation, ...) |
 
-**Model management and a guided catalog (`/v1/audio-models`, `/v1/audio-catalog`)
-are not built yet** — this is a Phase 1 integration (the proxy + process
-supervision only), following the same phased rollout LLM serving used. Until
-then, install a model by hand: create `<audioModelsDir>/<id>/`, drop the
-model's files in it, and write `model.json`.
+### Model management (`/v1/audio-models`)
+
+Each audio model is a flat bundle directory — same shape as LLM bundles, but
+`model.json` is **required**, not an optional display-name sidecar, since
+`family`/`task` are what let the generated `--config` registry (above)
+actually register the model:
+
+```bash
+curl localhost:3000/v1/audio-models                 # list installed bundles
+curl -X POST localhost:3000/v1/audio-models \
+  -d '{"model":"pocket-tts"}' -H 'content-type: application/json'
+curl -X PUT localhost:3000/v1/audio-models/pocket-tts/manifest \
+  -H 'content-type: application/json' -d '{"family":"pocket_tts","task":"tts"}'
+curl -X POST localhost:3000/v1/audio-models/download -H 'content-type: application/json' \
+  -d '{"model":"pocket-tts","type":"weights","url":"https://.../pocket-tts-english-q8_0.gguf"}'
+curl -X DELETE localhost:3000/v1/audio-models/pocket-tts
+```
+
+Downloads run through the same background download engine as the image/LLM
+sides (progress, resume, cancel) via `/v1/audio-downloads` —
+`DownloadManager`'s `ComponentPathResolver<TType>` generalization now backs a
+third domain. A completed download debounce-restarts `audiocpp_server` (same
+pattern as LLM auto-restart) so the new model becomes servable without a
+manual restart.
+
+### Model catalog (`/v1/audio-catalog`)
+
+A small curated catalog
+([`src/audio-catalog/data.ts`](src/audio-catalog/data.ts)), verified against
+audio.cpp's own community GGUF mono-repo
+([`audio-cpp/audio.cpp-gguf`](https://huggingface.co/audio-cpp/audio.cpp-gguf))
+rather than guessed — spans TTS (PocketTTS, Qwen3-TTS, Chatterbox) and ASR
+(Qwen3-ASR). Each entry carries `family`/`task`, so installing from the
+catalog writes the `model.json` manifest automatically — no hand-authoring
+needed, unlike a manual install. Like the image/LLM catalogs, only repo
+paths are hardcoded; quantizations resolve **live** via the HuggingFace Hub
+API (shared `src/catalog/hf.ts`). audio.cpp covers 40+ model families total;
+this list is deliberately small to start and grows the same way the LLM/
+image catalogs did.
+
+```bash
+curl localhost:3000/v1/audio-catalog                        # curated models
+curl localhost:3000/v1/audio-catalog/pocket-tts/files       # live quant options (HF)
+```
+
+The web UI's **Audio** tab (Speak/Transcribe, Models, Catalog sub-tabs)
+drives the same install flow as the LLM tab — pick a model → pick a file per
+component → writes `model.json` then enqueues the download(s) — plus a
+playground: type text and hear it back (`/v1/audio/speech`), or upload a
+file and see the transcript (`/v1/audio/transcriptions`).
 
 **Binary availability**: unlike stable-diffusion.cpp/llama.cpp, audio.cpp
 currently only publishes **Windows** prebuilt releases — `SD_AUDIO_AUTO_INSTALL`
@@ -727,7 +777,10 @@ src/
   llm-catalog/      # curated LLM catalog (reuses catalog/hf.ts)
   logs/             # in-memory ring buffer tee'd from pino (buffer.ts)
   audio/            # audiocpp_server process manager, generated server-config, installer
-  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog, logs, audio
+  audio-models/     # audio bundle resolver + manager (flat <id>/ layout, required model.json)
+  audio-catalog/    # curated audio catalog (reuses catalog/hf.ts)
+  routes/           # generate, jobs, models, outputs, health, llm, llm-models, llm-catalog, logs,
+                    #   audio, audio-models, audio-catalog
   util/             # path safety, filename, validation
 public/             # thin web UI (single static index.html, no build step)
 test/               # vitest unit + integration tests (uses fake `sd`/`llama-server`/`audiocpp_server` binaries)
@@ -756,10 +809,9 @@ LLM serving: model management and a downloadable catalog now ship (see
 above); image-attach in the Chat UI and LoRA/restart-policy/preset support
 for `llama-server` remain planned follow-ups.
 
-Audio (audio.cpp): model management (`/v1/audio-models`) and a downloadable
-catalog (`/v1/audio-catalog`) are planned follow-ups, same rollout shape as
-LLM serving — install models by hand for now (see above). A web UI tab,
-auto-install once upstream ships Linux/macOS releases, and routes for
-audio.cpp's other tasks (voice conversion, music generation, source
-separation — reachable today via the generic `/v1/audio/tasks/run`) are
-further out.
+Audio (audio.cpp): model management, a downloadable catalog, and a web UI tab
+now ship (see above). Auto-install once upstream ships Linux/macOS releases,
+`/v1/audio/transcriptions/live` (raw chunked-PCM streaming transcription),
+and dedicated routes for audio.cpp's other tasks (voice conversion, music
+generation, source separation — reachable today via the generic
+`/v1/audio/tasks/run`) remain planned follow-ups.
