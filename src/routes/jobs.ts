@@ -25,7 +25,11 @@ export async function jobRoutes(fastify: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ['jobs'],
-        summary: 'Enqueue an async generation job',
+        summary: 'Enqueue an async generation job (image or video)',
+        description:
+          'Preferred for video (Wan T2V/I2V, mode:"video" bundles) and any long-running job — ' +
+          'stream progress via GET /v1/jobs/:id/stream. See POST /v1/generate for how video vs. ' +
+          'image is selected.',
         body: generateSchema,
         response: { 202: jobSchema, 400: errorResponseSchema },
       },

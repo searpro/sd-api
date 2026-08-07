@@ -70,6 +70,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     maxConcurrentJobs: 2,
     maxConcurrentDownloads: 2,
     jobTimeoutMs: 10000,
+    videoJobTimeoutMs: 10000,
     maxImageDim: 2048,
     logLevel: 'fatal',
     autoInstall: false,

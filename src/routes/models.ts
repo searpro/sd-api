@@ -28,6 +28,7 @@ const bundleSchema = z.object({
   id: z.string(),
   name: z.string(),
   loadMode: z.enum(['model', 'diffusion-model']),
+  mode: z.enum(['image', 'video']),
   checkpoint: componentFileSchema.nullable(),
   vae: componentFileSchema.nullable(),
   clip: z.array(componentFileSchema),
@@ -121,6 +122,7 @@ export async function modelRoutes(fastify: FastifyInstance): Promise<void> {
         body: z.object({
           name: z.string().optional(),
           load: z.enum(['auto', 'model', 'diffusion-model']).optional(),
+          mode: z.enum(['image', 'video']).optional(),
           components: z.record(z.string()).optional(),
           defaults: z.record(z.unknown()).optional(),
           extra_args: z.array(z.string()).optional(),

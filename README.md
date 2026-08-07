@@ -27,6 +27,7 @@ Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (lo
 | LLM catalog | Guided LLM downloads (curated GGUF models, < 30B) | `GET /v1/llm-catalog` |
 | LLM models | LLM bundle management + background downloads | `GET /v1/llm-models` |
 | Audio | OpenAI-style TTS/transcription via audio.cpp (proxy) | `POST /v1/audio/speech` |
+| Video | Text/image-to-video (Wan T2V/I2V only) — same `/v1/generate`/`/v1/jobs` | `mode:"video"` bundle |
 
 ## Prerequisites
 
@@ -130,11 +131,12 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_RELEASE_TAG` | `release_tag` | `latest` | Release to install (`latest` or a specific tag) |
 | `SD_ACCEL` | `accel` | `cpu` | Backend: `cpu`, `vulkan`, `cuda`, `rocm` |
 | `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root holding per-model bundle directories |
-| `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images and (non-streaming) generated speech audio |
+| `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images, (non-streaming) generated speech audio, and generated video |
 | `SD_HOST` / `SD_PORT` | `host` / `port` | `0.0.0.0` / `3000` | Listen address |
 | `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `2` | Generation queue concurrency |
 | `SD_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `2` | Download queue concurrency |
-| `SD_JOB_TIMEOUT_MS` | `job_timeout_ms` | `600000` | Per-process hard timeout |
+| `SD_JOB_TIMEOUT_MS` | `job_timeout_ms` | `600000` | Per-process hard timeout (image generations) |
+| `SD_VIDEO_JOB_TIMEOUT_MS` | `video_job_timeout_ms` | `3600000` | Per-process hard timeout for `mode:"video"` (Wan) generations — much longer-running than images |
 | `SD_MAX_IMAGE_DIM` | `max_image_dim` | `2048` | Max width/height accepted |
 | `SD_LOG_LEVEL` | `log_level` | `info` | pino level |
 | `GITHUB_TOKEN` | — | — | Optional; raises GitHub API rate limit for auto-install |
@@ -185,6 +187,7 @@ Drop a manifest in the bundle to override auto-detection:
 {
   "name": "Z-Image Turbo",
   "load": "diffusion-model",        // or "model", or "auto" (default)
+  "mode": "image",                   // or "video" (Wan T2V/I2V) — default "image"
   "components": {                    // pin specific files / roles
     "checkpoint": "z_image_turbo-Q2_K.gguf",
     "vae": "z_image_vae.safetensors",
@@ -194,7 +197,9 @@ Drop a manifest in the bundle to override auto-detection:
 }
 ```
 
-`defaults` are applied to any generation request that omits those fields.
+`defaults` are applied to any generation request that omits those fields —
+including `video_frames`/`flow_shift` for `mode:"video"` bundles (see
+"Video generation (Wan)" below).
 
 ## Model catalog (guided downloads)
 
@@ -329,6 +334,50 @@ img2img" panel for uploading reference / init images.
 
 Catalog edit models: FLUX.1-Kontext-dev, Qwen-Image-Edit, Qwen-Image-Edit-2509
 (multi-ref), Qwen-Image-Edit-2511.
+
+## Video generation (Wan)
+
+stable-diffusion.cpp also supports video generation (`-M vid_gen`) for several
+model families — this covers **Wan2.1 T2V/I2V only** so far (the smallest
+slice that proves the pipeline end to end). Wan2.2's dual-stage A14B,
+FLF2V, V2V, and the other engines (MiniMax-H3, LTX-2.3, HunyuanVideo 1.5,
+LingBot-Video) aren't wired up yet.
+
+Video reuses the **same** `/v1/generate` (sync) and `/v1/jobs` (async + SSE)
+endpoints images use — a bundle's `model.json` manifest declares
+`"mode": "video"`, and that alone determines whether a request goes through
+`sd-cli` in image or video mode. There's no separate `/v1/video/*` surface.
+
+```bash
+curl -X POST localhost:3000/v1/generate -H 'content-type: application/json' -d '{
+  "prompt": "a cat flying through clouds",
+  "model": "wan2.1-t2v-1.3b",
+  "video_frames": 33,
+  "flow_shift": 3
+}'
+# -> {"video_path": "...", "video_url": "/v1/outputs/....webm", "metadata": {"kind": "video", ...}}
+```
+
+- `video_frames` → `--video-frames`, `flow_shift` → `--flow-shift`. Both are
+  optional per-request fields on the same `generateSchema`, and both can also
+  be set as bundle `defaults` (same override pattern as `steps`/`cfg_scale`).
+- **I2V** reuses the existing img2img flow — set `init_image` (uploaded via
+  `POST /v1/inputs`) to the source frame; no separate upload path.
+- The response shape is unchanged for image requests (`image_path`/
+  `image_url`); video requests populate `video_path`/`video_url` instead, with
+  `metadata.kind: "video"`. `POST /v1/jobs` + `GET /v1/jobs/:id/stream` work
+  identically to the image flow — `result.video_url` is what the web UI's
+  Generate tab renders into a `<video>` element (image requests still get an
+  `<img>`).
+- Video jobs run far longer than image jobs — a separate timeout applies
+  (`SD_VIDEO_JOB_TIMEOUT_MS`, default 60 min vs. images' 10 min; see
+  Configuration below).
+- Catalog entries: `wan2.1-t2v-1.3b` (smallest/fastest — good default) and
+  `wan2.1-i2v-14b-480p`, sourced from `Comfy-Org/Wan_2.1_ComfyUI_repackaged`
+  (VAE/text-encoder/vision-encoder) plus `samuelchristlie/Wan2.1-T2V-1.3B-GGUF`
+  / `city96/Wan2.1-I2V-14B-480P-gguf` / `city96/umt5-xxl-encoder-gguf` for
+  quantized GGUF checkpoints — install like any other split model via the
+  Catalog tab or `PUT /v1/models/<id>/manifest` with `"mode": "video"`.
 
 ## LLM serving (llama.cpp)
 

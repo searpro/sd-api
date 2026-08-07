@@ -8,6 +8,7 @@
   "max_concurrent_jobs": 2,
   "max_concurrent_downloads": 2,
   "job_timeout_ms": 600000,
+  "video_job_timeout_ms": 3600000,
   "max_image_dim": 2048,
   "log_level": "info",
   "auto_install": true,

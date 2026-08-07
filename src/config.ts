@@ -25,6 +25,7 @@ const configFileSchema = z
     max_concurrent_jobs: z.number().int().positive(),
     max_concurrent_downloads: z.number().int().positive(),
     job_timeout_ms: z.number().int().positive(),
+    video_job_timeout_ms: z.number().int().positive(),
     max_image_dim: z.number().int().positive(),
     log_level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
     auto_install: z.boolean(),
@@ -66,6 +67,8 @@ export interface Config {
   maxConcurrentJobs: number;
   maxConcurrentDownloads: number;
   jobTimeoutMs: number;
+  /** Per-process hard timeout for video (mode:"video" bundle) generations — much longer-running than images. */
+  videoJobTimeoutMs: number;
   maxImageDim: number;
   logLevel: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
   /** Download a prebuilt sd binary at startup if none is found. */
@@ -175,6 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     max_concurrent_jobs: num(env.SD_MAX_CONCURRENT_JOBS),
     max_concurrent_downloads: num(env.SD_MAX_CONCURRENT_DOWNLOADS),
     job_timeout_ms: num(env.SD_JOB_TIMEOUT_MS),
+    video_job_timeout_ms: num(env.SD_VIDEO_JOB_TIMEOUT_MS),
     max_image_dim: num(env.SD_MAX_IMAGE_DIM),
     log_level: env.SD_LOG_LEVEL,
     auto_install: bool(env.SD_AUTO_INSTALL),
@@ -220,6 +224,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxConcurrentJobs: parsed.max_concurrent_jobs,
     maxConcurrentDownloads: parsed.max_concurrent_downloads,
     jobTimeoutMs: parsed.job_timeout_ms,
+    videoJobTimeoutMs: parsed.video_job_timeout_ms,
     maxImageDim: parsed.max_image_dim,
     logLevel: parsed.log_level,
     autoInstall: parsed.auto_install,

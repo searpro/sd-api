@@ -38,11 +38,22 @@ export type ClipRole = 'clip_l' | 'clip_g' | 'clip_vision' | 't5xxl' | 'llm' | '
 /** How the checkpoint is loaded by sd-cli. */
 export type LoadMode = 'model' | 'diffusion-model';
 
+/**
+ * Generation kind — drives `-M vid_gen` emission (src/sd/args.ts) and output
+ * file extension (src/sd/wrapper.ts). Defaults to 'image': a bundle only
+ * behaves as a video model when its manifest explicitly says so. Video
+ * support currently targets Wan T2V/I2V (single checkpoint) only — Wan2.2's
+ * dual-stage A14B, FLF2V, and V2V are a deferred follow-up.
+ */
+export type GenerationMode = 'image' | 'video';
+
 export interface ModelManifest {
   /** Friendly display name. */
   name?: string;
   /** Force the load flag; otherwise auto-detected. */
   load?: 'auto' | LoadMode;
+  /** 'image' (default) or 'video' (Wan T2V/I2V — see GenerationMode). */
+  mode?: GenerationMode;
   /** Explicit component filenames (relative to their sub-directory). */
   components?: {
     checkpoint?: string;
@@ -56,6 +67,10 @@ export interface ModelManifest {
     height?: number;
     sampler?: string;
     negative_prompt?: string;
+    /** Video (Wan): number of frames to generate (--video-frames). */
+    video_frames?: number;
+    /** Video (Wan): flow-matching shift parameter (--flow-shift). */
+    flow_shift?: number;
   };
   /** Extra raw sd-cli flags appended verbatim (e.g. ["--qwen-image-zero-cond-t"]). */
   extra_args?: string[];
@@ -66,6 +81,7 @@ export interface ResolvedBundle {
   dir: string;
   displayName: string;
   loadMode: LoadMode;
+  mode: GenerationMode;
   checkpointPath: string;
   weights: Partial<Record<ClipRole | 'vae', string>>;
   defaults: NonNullable<ModelManifest['defaults']>;
@@ -104,6 +120,7 @@ export interface BundleInfo {
   id: string;
   name: string;
   loadMode: LoadMode;
+  mode: GenerationMode;
   checkpoint: ComponentFile | null;
   vae: ComponentFile | null;
   clip: ComponentFile[];
@@ -241,6 +258,7 @@ export async function inspectBundle(modelsDir: string, id: string): Promise<Bund
     id,
     name: manifest?.name ?? id,
     loadMode: resolveLoadMode(manifest, vae !== null, clip.length > 0),
+    mode: manifest?.mode ?? 'image',
     checkpoint: checkpoint ? { name: checkpoint.name, size: checkpoint.size } : null,
     vae: vae ? { name: vae.name, size: vae.size } : null,
     clip,
@@ -311,6 +329,7 @@ export async function resolveBundle(modelsDir: string, id: string): Promise<Reso
       dir: modelsDir,
       displayName: id,
       loadMode: 'model',
+      mode: 'image',
       checkpointPath: target,
       weights: {},
       defaults: {},
@@ -347,6 +366,7 @@ export async function resolveBundle(modelsDir: string, id: string): Promise<Reso
     dir,
     displayName: manifest?.name ?? id,
     loadMode: resolveLoadMode(manifest, vae !== null, clipFiles.length > 0),
+    mode: manifest?.mode ?? 'image',
     checkpointPath: resolve(dir, SUBDIRS.checkpoint, checkpoint.name),
     weights,
     defaults: manifest?.defaults ?? {},

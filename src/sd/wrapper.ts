@@ -17,8 +17,9 @@ import { spawnEnv } from '../util/spawn-env.js';
 import { errors, AppError } from '../errors.js';
 
 export interface GenerateResult {
-  imagePath: string;
-  imageName: string;
+  outputPath: string;
+  outputName: string;
+  kind: 'image' | 'video';
   durationMs: number;
   /** Effective parameters used (request values merged with bundle defaults). */
   params: GenerateParams;
@@ -145,9 +146,12 @@ export class SdWrapper extends EventEmitter {
       ref_images: params.ref_images,
       increase_ref_index: params.increase_ref_index,
       img_cfg_scale: params.img_cfg_scale,
+      video_frames: params.video_frames ?? bundle.defaults.video_frames,
+      flow_shift: params.flow_shift ?? bundle.defaults.flow_shift,
     };
 
-    // Resolve uploaded input images (img2img / edit) to validated paths.
+    // Resolve uploaded input images (img2img / edit / Wan I2V's conditioning
+    // image, which reuses the same init_image field and -i flag).
     const images = {
       init: params.init_image ? await this.resolveInput(params.init_image) : undefined,
       mask: params.mask ? await this.resolveInput(params.mask) : undefined,
@@ -156,32 +160,43 @@ export class SdWrapper extends EventEmitter {
         : undefined,
     };
 
-    const imageName = uniqueOutputName('png');
-    const outputPath = safeResolve(this.config.outputsDir, imageName);
+    // sd-cli's single-file video output only supports .avi, .webm, or animated
+    // .webp (confirmed via --help — NOT .mp4, which it silently writes as
+    // "<path>.avi" instead of failing). .webm is the one that's actually
+    // playable in a browser <video> tag (.avi/MJPEG mostly isn't).
+    const outputName = uniqueOutputName(bundle.mode === 'video' ? 'webm' : 'png');
+    const outputPath = safeResolve(this.config.outputsDir, outputName);
 
     const args = buildArgs({ params: effective, bundle, outputPath, images });
     this.log.info(
       {
         model: bundle.id,
         loadMode: bundle.loadMode,
+        mode: bundle.mode,
         weights: Object.keys(bundle.weights),
         refs: images.refs?.length ?? 0,
         init: Boolean(images.init),
       },
       'resolved model bundle',
     );
-    return this.run(args, outputPath, imageName, effective, { onProgress, onLog, signal });
+    const timeoutMs = bundle.mode === 'video' ? this.config.videoJobTimeoutMs : this.config.jobTimeoutMs;
+    return this.run(args, outputPath, outputName, bundle.mode, effective, timeoutMs, {
+      onProgress,
+      onLog,
+      signal,
+    });
   }
-
 
   private run(
     args: string[],
     outputPath: string,
-    imageName: string,
+    outputName: string,
+    kind: 'image' | 'video',
     params: GenerateParams,
+    jobTimeoutMs: number,
     cb: Pick<GenerateOptions, 'onProgress' | 'onLog' | 'signal'>,
   ): Promise<GenerateResult> {
-    const { sdBinaryPath, jobTimeoutMs } = this.config;
+    const { sdBinaryPath } = this.config;
     const started = Date.now();
     this.log.info({ bin: sdBinaryPath, args }, 'spawning stable-diffusion.cpp');
 
@@ -250,19 +265,19 @@ export class SdWrapper extends EventEmitter {
             const s = await stat(outputPath);
             if (!s.isFile() || s.size === 0) {
               return finish(
-                errors.generationFailed('Process exited 0 but no output image was produced', {
+                errors.generationFailed(`Process exited 0 but no output ${kind} was produced`, {
                   stderr: stderrTail.slice(-10),
                 }),
               );
             }
           } catch {
             return finish(
-              errors.generationFailed('Process exited 0 but output image is missing', {
+              errors.generationFailed(`Process exited 0 but output ${kind} is missing`, {
                 stderr: stderrTail.slice(-10),
               }),
             );
           }
-          finish(null, { imagePath: outputPath, imageName, durationMs: Date.now() - started, params });
+          finish(null, { outputPath, outputName, kind, durationMs: Date.now() - started, params });
         } else {
           const reason = extractFailureReason(stderrTail);
           finish(

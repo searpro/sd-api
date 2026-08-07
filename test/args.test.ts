@@ -8,6 +8,7 @@ const fullModel: ResolvedBundle = {
   dir: '/models',
   displayName: 'm.gguf',
   loadMode: 'model',
+  mode: 'image',
   checkpointPath: '/models/m.gguf',
   weights: {},
   defaults: {},
@@ -19,10 +20,32 @@ const splitModel: ResolvedBundle = {
   dir: '/models/z-image',
   displayName: 'z-image',
   loadMode: 'diffusion-model',
+  mode: 'image',
   checkpointPath: '/models/z-image/checkpoint/z.gguf',
   weights: { vae: '/models/z-image/vae/v.sft', llm: '/models/z-image/clip/qwen.gguf' },
   defaults: {},
   extraArgs: [],
+};
+
+const wanBundle: ResolvedBundle = {
+  id: 'wan2.1-t2v-1.3b',
+  dir: '/models/wan2.1-t2v-1.3b',
+  displayName: 'Wan2.1 T2V 1.3B',
+  loadMode: 'diffusion-model',
+  mode: 'video',
+  checkpointPath: '/models/wan2.1-t2v-1.3b/checkpoint/wan.gguf',
+  weights: {
+    vae: '/models/wan2.1-t2v-1.3b/vae/wan_2.1_vae.safetensors',
+    t5xxl: '/models/wan2.1-t2v-1.3b/clip/umt5xxl.gguf',
+  },
+  defaults: {},
+  extraArgs: [],
+};
+
+const wanI2vBundle: ResolvedBundle = {
+  ...wanBundle,
+  id: 'wan2.1-i2v-14b',
+  weights: { ...wanBundle.weights, clip_vision: '/models/wan2.1-i2v-14b/clip/clip_vision_h.safetensors' },
 };
 
 describe('buildArgs', () => {
@@ -119,6 +142,46 @@ describe('buildArgs', () => {
       outputPath: '/x.png',
     });
     expect(args.slice(-3)).toEqual(['--qwen-image-zero-cond-t', '--flow-shift', '3']);
+  });
+
+  it('emits -M vid_gen and --video-frames/--flow-shift for a video (Wan) bundle', () => {
+    const args = buildArgs({
+      params: { prompt: 'a cat flying', model: 'wan2.1-t2v-1.3b', video_frames: 33, flow_shift: 3 },
+      bundle: wanBundle,
+      outputPath: '/out/x.webm',
+    });
+    expect(args.slice(0, 2)).toEqual(['-M', 'vid_gen']);
+    expect(args[args.indexOf('--diffusion-model') + 1]).toBe('/models/wan2.1-t2v-1.3b/checkpoint/wan.gguf');
+    expect(args[args.indexOf('--vae') + 1]).toBe('/models/wan2.1-t2v-1.3b/vae/wan_2.1_vae.safetensors');
+    expect(args[args.indexOf('--t5xxl') + 1]).toBe('/models/wan2.1-t2v-1.3b/clip/umt5xxl.gguf');
+    expect(args[args.indexOf('--video-frames') + 1]).toBe('33');
+    expect(args[args.indexOf('--flow-shift') + 1]).toBe('3');
+  });
+
+  it('does not emit -M for an image bundle even if video params are somehow present', () => {
+    const args = buildArgs({
+      params: { prompt: 'p', model: 'm.gguf', video_frames: 33 },
+      bundle: fullModel,
+      outputPath: '/x.png',
+    });
+    expect(args).not.toContain('-M');
+    // video_frames is still forwarded (bundle.mode alone gates -M, not the flag) —
+    // sd-cli itself would reject it outside vid_gen mode; that's an operator error,
+    // not something buildArgs needs to police.
+    expect(args).toContain('--video-frames');
+  });
+
+  it('wires clip_vision for a Wan I2V bundle via the existing -i (init image) flag', () => {
+    const args = buildArgs({
+      params: { prompt: 'animate this', model: 'wan2.1-i2v-14b' },
+      bundle: wanI2vBundle,
+      outputPath: '/out/x.webm',
+      images: { init: '/in/start.png' },
+    });
+    expect(args[args.indexOf('--clip_vision') + 1]).toBe(
+      '/models/wan2.1-i2v-14b/clip/clip_vision_h.safetensors',
+    );
+    expect(args[args.indexOf('-i') + 1]).toBe('/in/start.png');
   });
 
   it('passes prompt as a discrete arg (no shell injection surface)', () => {

@@ -25,23 +25,35 @@ HTTP (routes/*)  ──►  Services (decorated on app)  ──►  sd-cli / fil
   instance (`app.audioDownloads`), `AudioCatalogManager`
   (`app.audioCatalog`). Augmented onto `FastifyInstance` in `src/types.ts`.
 
-## Request → image lifecycle
+## Request → image/video lifecycle
 
 1. `POST /v1/jobs` (or `/v1/generate`) validates the body with
    `generateSchema` (`src/schemas/generate.ts`).
 2. `JobManager.create()` enqueues; a concurrency-limited worker calls
    `SdWrapper.generate()`.
 3. `resolveBundle(modelsDir, id)` (`src/models/bundle.ts`) finds the checkpoint
-   + components and decides `loadMode` (`-m` full vs `--diffusion-model` split).
+   + components, decides `loadMode` (`-m` full vs `--diffusion-model` split)
+   and `mode` (`image` vs `video` — from the manifest, see below).
 4. Manifest `defaults` merge under request params; input images
-   (`init_image`/`mask`/`ref_images`) resolve to validated paths under `inputsDir`.
+   (`init_image`/`mask`/`ref_images`) resolve to validated paths under `inputsDir`
+   (Wan I2V's conditioning image reuses `init_image`, same as img2img).
 5. `buildArgs()` (`src/sd/args.ts`) produces the argv (flag map + weights +
-   edit flags + `--lora-model-dir` + manifest `extra_args`).
+   edit flags + `--lora-model-dir` + manifest `extra_args`; `-M vid_gen` +
+   `--video-frames`/`--flow-shift` when `bundle.mode === 'video'`).
 6. `SdWrapper.run()` spawns `sd-cli` with `spawnEnv()` (lib path), streams
-   stdout/stderr through `parseProgress()` (`src/sd/progress.ts`), enforces the
-   timeout, and on exit validates the output PNG.
+   stdout/stderr through `parseProgress()` (`src/sd/progress.ts`), enforces a
+   timeout (`jobTimeoutMs`, or `videoJobTimeoutMs` for video — much
+   longer-running), and on exit validates the output file (`.png` or `.webm`,
+   picked by `bundle.mode` — sd-cli's `-o` for video only supports
+   `.avi`/`.webm`/animated `.webp`, confirmed via `--help`; `.mp4` gets
+   silently written as `<path>.avi` instead of erroring, which is why the
+   file-existence check would otherwise "succeed" with nothing at the
+   expected path).
 7. Progress + completion are emitted as events; `GET /v1/jobs/:id/stream` relays
-   them as SSE.
+   them as SSE. `GenerateResult`/`Job.result` carry a `kind: 'image'|'video'`
+   discriminant — routes populate `image_path`/`image_url` or
+   `video_path`/`video_url` accordingly (the wire schema keeps both pairs
+   optional rather than repurposing the image fields for video).
 
 ## Model bundles (`src/models/bundle.ts`)
 
@@ -63,15 +75,22 @@ models/<id>/
   (e.g. `qwen…`→`llm`, `t5xxl…`→`t5xxl`, `mmproj…`→`llm_vision`); a `model.json`
   `components` map overrides it. `load`/`extra_args`/`defaults` come from the
   manifest. `.part`/`.part.json` are excluded from component resolution.
+- **`mode: 'image' | 'video'`** (manifest, default `'image'`) is the sole
+  switch for Wan T2V/I2V — no separate SUBDIRS entry or bundle shape needed
+  since Wan fits the existing `diffusion-model` + `vae`/`t5xxl`/`clip_vision`
+  layout. Wan2.2's dual-stage A14B (needs a *second* simultaneous checkpoint
+  via `--high-noise-diffusion-model`) would need a new component slot — not
+  implemented.
 
 ## sd-cli arg mapping (`src/sd/args.ts`)
 
-`FLAG_MAP` (prompt/negative/steps/cfg/W/H/seed/sampler) + `WEIGHT_FLAG`
-(vae/clip_l/clip_g/clip_vision/t5xxl/llm/llm_vision) + edit flags
-(`-i`/`--strength`/`--mask`/`-r`/`--increase-ref-index`/`--img-cfg-scale`) +
-`--lora-model-dir` + `bundle.extraArgs`. The prompt (incl. `<lora:…>` tags) is
-passed verbatim as one argv element. Verify against the real CLI help when in
-doubt — see the `sd-cli` binary's `--help` (flags drift between releases).
+`FLAG_MAP` (prompt/negative/steps/cfg/W/H/seed/sampler/video_frames/flow_shift)
++ `WEIGHT_FLAG` (vae/clip_l/clip_g/clip_vision/t5xxl/llm/llm_vision) + edit
+flags (`-i`/`--strength`/`--mask`/`-r`/`--increase-ref-index`/`--img-cfg-scale`)
++ `--lora-model-dir` + `bundle.extraArgs`. `-M vid_gen` is prepended when
+`bundle.mode === 'video'`. The prompt (incl. `<lora:…>` tags) is passed
+verbatim as one argv element. Verify against the real CLI help when in doubt
+— see the `sd-cli` binary's `--help` (flags drift between releases).
 
 ## Downloads (`src/downloads/manager.ts`)
 

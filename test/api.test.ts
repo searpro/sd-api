@@ -1,13 +1,31 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import type { Config } from '../src/config.js';
 import { buildServer } from '../src/server.js';
 import { makeTestConfig } from './helpers.js';
 import { setHfToken } from '../src/util/hf-auth.js';
 
 let app: FastifyInstance;
+let config: Config;
 
 beforeAll(async () => {
-  app = await buildServer(await makeTestConfig());
+  config = await makeTestConfig();
+  // A video (Wan T2V) bundle alongside the image-side "test" bundle already
+  // seeded by makeTestConfig — see test/helpers.ts.
+  await mkdir(join(config.modelsDir, 'wan-t2v', 'checkpoint'), { recursive: true });
+  await mkdir(join(config.modelsDir, 'wan-t2v', 'vae'), { recursive: true });
+  await mkdir(join(config.modelsDir, 'wan-t2v', 'clip'), { recursive: true });
+  await writeFile(join(config.modelsDir, 'wan-t2v', 'checkpoint', 'wan.gguf'), 'dummy');
+  await writeFile(join(config.modelsDir, 'wan-t2v', 'vae', 'wan_2.1_vae.safetensors'), 'dummy');
+  await writeFile(join(config.modelsDir, 'wan-t2v', 'clip', 'umt5xxl.gguf'), 'dummy');
+  await writeFile(
+    join(config.modelsDir, 'wan-t2v', 'model.json'),
+    JSON.stringify({ name: 'Wan2.1 T2V 1.3B', mode: 'video', defaults: { video_frames: 9 } }),
+  );
+
+  app = await buildServer(config);
 });
 
 afterAll(async () => {
@@ -67,6 +85,22 @@ describe('POST /v1/generate (Phase 1+2)', () => {
     expect(body.image_url).toMatch(/^\/v1\/outputs\//);
     expect(body.metadata.prompt).toBe('a cat');
     expect(body.metadata.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(body.metadata.kind).toBe('image');
+    expect(body.video_url).toBeUndefined();
+  });
+
+  it('generates a video (webm) synchronously against a mode:"video" bundle', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/generate',
+      payload: { prompt: 'a cat flying', model: 'wan-t2v', video_frames: 9 },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.video_url).toMatch(/^\/v1\/outputs\/.*\.webm$/);
+    expect(body.image_url).toBeUndefined();
+    expect(body.metadata.kind).toBe('video');
+    expect(body.metadata.video_frames).toBe(9);
   });
 
   it('rejects a missing model with MODEL_NOT_FOUND', async () => {
@@ -216,6 +250,36 @@ describe('jobs (Phase 4)', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/jobs/does-not-exist' });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('JOB_NOT_FOUND');
+  });
+
+  it('runs a video (Wan) job to completion and serves the .webm output', async () => {
+    const create = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      payload: { prompt: 'a cat flying through clouds', model: 'wan-t2v', video_frames: 17, flow_shift: 3 },
+    });
+    expect(create.statusCode).toBe(202);
+    const { id } = create.json();
+
+    let status = 'queued';
+    let final;
+    for (let i = 0; i < 50 && status !== 'completed' && status !== 'failed'; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      final = await app.inject({ method: 'GET', url: `/v1/jobs/${id}` });
+      status = final.json().status;
+    }
+    expect(status).toBe('completed');
+
+    const result = final!.json().result;
+    expect(result.video_url).toMatch(/^\/v1\/outputs\/.*\.webm$/);
+    expect(result.image_url).toBeUndefined();
+    expect(result.metadata.kind).toBe('video');
+    expect(result.metadata.video_frames).toBe(17);
+    expect(result.metadata.flow_shift).toBe(3);
+
+    const out = await app.inject({ method: 'GET', url: result.video_url });
+    expect(out.statusCode).toBe(200);
+    expect(out.headers['content-type']).toBe('video/webm');
   });
 });
 

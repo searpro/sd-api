@@ -39,6 +39,8 @@ export interface CatalogModel {
   loadMode: 'model' | 'diffusion-model';
   /** Image-edit model: expects one or more reference images at generation. */
   edit?: boolean;
+  /** 'video' (Wan T2V/I2V) writes mode:"video" to the bundle manifest — see src/models/bundle.ts. Defaults to 'image'. */
+  mode?: 'image' | 'video';
   /** Extra raw sd-cli flags written to the bundle manifest on install. */
   extraArgs?: string[];
   /** Link to the upstream documentation page. */
@@ -50,6 +52,10 @@ export interface CatalogModel {
     height?: number;
     sampler?: string;
     negative_prompt?: string;
+    /** Video (Wan): number of frames (--video-frames). */
+    video_frames?: number;
+    /** Video (Wan): flow-matching shift (--flow-shift). */
+    flow_shift?: number;
   };
   components: CatalogComponent[];
 }

@@ -35,6 +35,21 @@ describe('bundle resolution', () => {
     await writeFile(join(modelsDir, 'sdxl', 'checkpoint', 'sdxl.gguf'), 'x');
     // Single-file model
     await writeFile(join(modelsDir, 'flat.gguf'), 'x');
+    // Video (Wan T2V) model: diffusion + vae + t5xxl, manifest declares mode:"video"
+    await mkdir(join(modelsDir, 'wan-t2v', 'checkpoint'), { recursive: true });
+    await mkdir(join(modelsDir, 'wan-t2v', 'vae'), { recursive: true });
+    await mkdir(join(modelsDir, 'wan-t2v', 'clip'), { recursive: true });
+    await writeFile(join(modelsDir, 'wan-t2v', 'checkpoint', 'wan2.1-t2v-1.3b.gguf'), 'x');
+    await writeFile(join(modelsDir, 'wan-t2v', 'vae', 'wan_2.1_vae.safetensors'), 'x');
+    await writeFile(join(modelsDir, 'wan-t2v', 'clip', 'umt5xxl.gguf'), 'x');
+    await writeFile(
+      join(modelsDir, 'wan-t2v', 'model.json'),
+      JSON.stringify({
+        name: 'Wan2.1 T2V 1.3B',
+        mode: 'video',
+        defaults: { video_frames: 33, flow_shift: 3 },
+      }),
+    );
   });
 
   it('resolves a split model with --diffusion-model + vae + llm', async () => {
@@ -94,5 +109,27 @@ describe('bundle resolution', () => {
   it('has no lora-model-dir when the bundle has no loras', async () => {
     const b = await resolveBundle(modelsDir, 'sdxl');
     expect(b.loraDir).toBeUndefined();
+  });
+
+  it('defaults mode to "image" for a bundle with no manifest mode', async () => {
+    const b = await resolveBundle(modelsDir, 'sdxl');
+    expect(b.mode).toBe('image');
+    const info = await inspectBundle(modelsDir, 'sdxl');
+    expect(info.mode).toBe('image');
+  });
+
+  it('resolves a video (Wan) bundle: mode + vae + t5xxl + video defaults', async () => {
+    const b = await resolveBundle(modelsDir, 'wan-t2v');
+    expect(b.mode).toBe('video');
+    expect(b.loadMode).toBe('diffusion-model');
+    expect(b.checkpointPath).toContain(join('checkpoint', 'wan2.1-t2v-1.3b.gguf'));
+    expect(b.weights.vae).toContain(join('vae', 'wan_2.1_vae.safetensors'));
+    expect(b.weights.t5xxl).toContain(join('clip', 'umt5xxl.gguf'));
+    expect(b.defaults.video_frames).toBe(33);
+    expect(b.defaults.flow_shift).toBe(3);
+
+    const info = await inspectBundle(modelsDir, 'wan-t2v');
+    expect(info.mode).toBe('video');
+    expect(info.ready).toBe(true);
   });
 });

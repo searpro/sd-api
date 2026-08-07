@@ -18,7 +18,13 @@ export interface Job {
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
-  result?: { image_path: string; image_url: string; metadata: Record<string, unknown> };
+  result?: {
+    image_path?: string;
+    image_url?: string;
+    video_path?: string;
+    video_url?: string;
+    metadata: Record<string, unknown>;
+  };
   error?: { code: string; message: string };
 }
 
@@ -143,10 +149,13 @@ export class JobManager {
       job.status = 'completed';
       job.progress = 1;
       job.finishedAt = new Date().toISOString();
+      const outputUrl = `/v1/outputs/${result.outputName}`;
       job.result = {
-        image_path: result.imagePath,
-        image_url: `/v1/outputs/${result.imageName}`,
+        ...(result.kind === 'video'
+          ? { video_path: result.outputPath, video_url: outputUrl }
+          : { image_path: result.outputPath, image_url: outputUrl }),
         metadata: {
+          kind: result.kind,
           prompt: result.params.prompt,
           model: result.params.model,
           steps: result.params.steps,
@@ -155,6 +164,8 @@ export class JobManager {
           height: result.params.height,
           seed: result.params.seed,
           sampler: result.params.sampler,
+          video_frames: result.params.video_frames,
+          flow_shift: result.params.flow_shift,
           duration_ms: result.durationMs,
         },
       };

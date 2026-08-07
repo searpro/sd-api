@@ -17,6 +17,7 @@ export interface CatalogModelSummary {
   name: string;
   description?: string;
   loadMode: 'model' | 'diffusion-model';
+  mode: 'image' | 'video';
   edit: boolean;
   extraArgs?: string[];
   reference?: string;
@@ -45,6 +46,7 @@ export class CatalogManager {
       name: m.name,
       description: m.description,
       loadMode: m.loadMode,
+      mode: m.mode ?? 'image',
       edit: m.edit ?? false,
       extraArgs: m.extraArgs,
       reference: m.reference,

@@ -208,6 +208,14 @@
               </div>
             </div>
 
+            <div id="videoSection" class="row-3 hidden" style="margin-top:0;">
+              <div><label for="videoFrames">Video frames</label><input id="videoFrames" type="number" min="1" max="257" placeholder="33" /></div>
+              <div><label for="flowShift">Flow shift</label><input id="flowShift" type="number" min="0" step="0.5" placeholder="3" /></div>
+              <div style="font-size:11px;color:var(--muted);align-self:end;padding-bottom:8px;">
+                Video (Wan). For I2V, set the source frame as "Init image" below.
+              </div>
+            </div>
+
             <details id="editSection" style="margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:0 12px;">
               <summary style="cursor:pointer;padding:10px 0;font-size:13px;color:var(--muted);">Image editing / img2img (optional)</summary>
               <div style="padding-bottom:12px;">
@@ -688,6 +696,7 @@
             if (prev && ready.some((m) => m.id === prev)) sel.value = prev;
           }
           renderLoras();
+          renderVideoSection();
         } catch (e) {
           sel.innerHTML = '<option value="">— failed to load models —</option>';
         }
@@ -718,7 +727,12 @@
           chips.appendChild(b);
         });
       }
+      function renderVideoSection() {
+        const model = modelsCache.find((m) => m.id === $('model').value);
+        $('videoSection').classList.toggle('hidden', !model || model.mode !== 'video');
+      }
       document.getElementById('model').addEventListener('change', renderLoras);
+      document.getElementById('model').addEventListener('change', renderVideoSection);
 
       // ---- Generation ----
       let currentJob = null;
@@ -796,6 +810,10 @@
         opt('seed', 'seed', Number);
         if ($('sampler').value) payload.sampler = $('sampler').value;
 
+        // Video (Wan) — only meaningful when the selected model's mode is "video".
+        opt('videoFrames', 'video_frames', Number);
+        opt('flowShift', 'flow_shift', Number);
+
         // Image editing / img2img inputs.
         if (refInputs.length) payload.ref_images = refInputs;
         if ($('increaseRefIndex').checked) payload.increase_ref_index = true;
@@ -852,14 +870,22 @@
           const result = JSON.parse(e.data);
           $('barFill').style.width = '100%';
           $('statusText').textContent = 'completed';
-          const url = result.image_url + '?t=' + Date.now();
+          const isVideo = result.metadata?.kind === 'video' || Boolean(result.video_url);
+          const url = (isVideo ? result.video_url : result.image_url) + '?t=' + Date.now();
           $('canvas').innerHTML = '';
-          const img = document.createElement('img');
-          img.src = url; img.alt = 'generated image';
-          $('canvas').appendChild(img);
+          if (isVideo) {
+            const video = document.createElement('video');
+            video.src = url; video.controls = true; video.autoplay = true; video.loop = true;
+            video.style.maxWidth = '100%';
+            $('canvas').appendChild(video);
+          } else {
+            const img = document.createElement('img');
+            img.src = url; img.alt = 'generated image';
+            $('canvas').appendChild(img);
+          }
           es.close(); currentES = null; currentJob = null;
           setGenerating(false);
-          toast('Image generated' + (result.metadata?.duration_ms ? ' in ' + (result.metadata.duration_ms/1000).toFixed(1) + 's' : ''));
+          toast((isVideo ? 'Video' : 'Image') + ' generated' + (result.metadata?.duration_ms ? ' in ' + (result.metadata.duration_ms/1000).toFixed(1) + 's' : ''));
         });
         es.addEventListener('error', (e) => {
           // SSE 'error' is fired both for our app error event and on transport drop.
@@ -988,7 +1014,8 @@
             const badge = m.ready
               ? '<span class="pill" style="border-color:var(--accent-2);color:#7ee2a8">' + m.loadMode + '</span>'
               : '<span class="pill" style="border-color:var(--danger);color:#f5a8a3">no checkpoint</span>';
-            head.innerHTML = '<strong>' + m.name + '</strong> ' + badge;
+            const videoBadge = m.mode === 'video' ? ' <span class="pill" style="border-color:#c792ea;color:#c792ea">video</span>' : '';
+            head.innerHTML = '<strong>' + m.name + '</strong> ' + badge + videoBadge;
             const delAll = document.createElement('button');
             delAll.className = 'danger'; delAll.textContent = 'Delete model';
             delAll.onclick = () => deleteModel(m.id);
@@ -1127,7 +1154,8 @@
             const card = document.createElement('div');
             card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--panel-2);cursor:pointer;';
             const editBadge = m.edit ? ' <span class="pill" style="border-color:var(--accent);color:#9cc2ff">edit</span>' : '';
-            card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + m.loadMode + '</span>' + editBadge +
+            const videoBadge = m.mode === 'video' ? ' <span class="pill" style="border-color:#c792ea;color:#c792ea">video</span>' : '';
+            card.innerHTML = '<strong>' + m.name + '</strong> <span class="pill">' + m.loadMode + '</span>' + editBadge + videoBadge +
               '<div style="color:var(--muted);font-size:12px;margin-top:3px;">' + (m.description || '') + '</div>';
             card.onclick = () => { document.querySelectorAll('#catalogList > div').forEach(d => d.style.borderColor = 'var(--border)'); card.style.borderColor = 'var(--accent)'; selectCatalogModel(m.id); };
             list.appendChild(card);
@@ -1233,7 +1261,7 @@
           status.textContent = 'Writing manifest…';
           await api('/v1/models/' + encodeURIComponent(name) + '/manifest', {
             method: 'PUT', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ name: model.name, load: model.loadMode, components, defaults: model.defaults || {}, extra_args: model.extraArgs || [] }),
+            body: JSON.stringify({ name: model.name, load: model.loadMode, mode: model.mode, components, defaults: model.defaults || {}, extra_args: model.extraArgs || [] }),
           });
 
           // 2. Enqueue all component downloads (run in background, concurrency-limited).

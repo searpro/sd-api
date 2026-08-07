@@ -86,6 +86,14 @@ describe('CatalogManager', () => {
     expect(llm!.bundleType).toBe('clip');
   });
 
+  it('defaults mode to "image" and surfaces "video" for Wan entries (regression: list() previously dropped this field)', () => {
+    const cat = new CatalogManager(log);
+    const models = cat.list();
+    expect(models.find((m) => m.id === 'z-image-turbo')!.mode).toBe('image');
+    expect(models.find((m) => m.id === 'wan2.1-t2v-1.3b')!.mode).toBe('video');
+    expect(models.find((m) => m.id === 'wan2.1-i2v-14b-480p')!.mode).toBe('video');
+  });
+
   it('resolves component files via the (stubbed) HF API', async () => {
     stubTree([{ path: 'z_image_turbo-Q3_K.gguf', size: 100 }]);
     const cat = new CatalogManager(log);

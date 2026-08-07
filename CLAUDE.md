@@ -62,6 +62,14 @@ Generation flow: route → `jobs.create()` → `sd.generate()` →
   checkpoint. See the `add-catalog-model` skill / docs/ARCHITECTURE.md.
 - **LoRA** is prompt-activated (`<lora:name:mult>`) + `--lora-model-dir`; it is
   NOT a CLI weight flag.
+- **Video generation** (Wan T2V/I2V only) reuses the image pipeline end to
+  end — no separate domain/routes. A bundle's `model.json` sets
+  `"mode": "video"`, which makes `buildArgs()` emit `-M vid_gen` and
+  `wrapper.ts` write a `.webm` instead of `.png` (sd-cli's `-o` only supports
+  `.avi`/`.webm`/animated `.webp` for video, NOT `.mp4` — it silently appends
+  `.avi` if you ask for an unrecognized extension). Wan2.2 A14B (dual-stage),
+  FLF2V, V2V, and other video engines (MiniMax-H3, LTX-2.3, HunyuanVideo,
+  LingBot-Video) are not implemented.
 - **Logger** type in services is `FastifyBaseLogger` (not pino's `Logger`).
 
 ## Conventions

@@ -9,10 +9,12 @@ import type { CatalogModel } from './types.js';
  * quantizations are listed live via the HF API (see hf.ts), so this data stays
  * small and does not go stale as new quants are published.
  *
- * Scope: txt2img models only. Image-edit models (Kontext, Qwen-Image-Edit,
- * LongCat/Boogu Edit), video models (Wan, LTX-2.3), PiD (requires a reference
- * image) and Ideogram4 (needs an unconditional diffusion model) are omitted
- * because the generation pipeline here is txt2img.
+ * Scope: txt2img models, plus Wan (video, T2V/I2V only — see the "Video (Wan)"
+ * section below). Image-edit models (Kontext, Qwen-Image-Edit, LongCat/Boogu
+ * Edit), other video engines (MiniMax-H3, LTX-2.3, HunyuanVideo, LingBot-Video),
+ * Wan2.2's dual-stage A14B/FLF2V/V2V, PiD (requires a reference image) and
+ * Ideogram4 (needs an unconditional diffusion model) are omitted — video beyond
+ * Wan T2V/I2V isn't wired up in the generation pipeline yet (see CLAUDE.md).
  */
 const DOCS = 'https://github.com/leejet/stable-diffusion.cpp/blob/master/docs';
 
@@ -21,6 +23,14 @@ const FLUX1_AE = { repo: 'black-forest-labs/FLUX.1-dev', match: 'ae' };
 const FLUX1_SCHNELL_AE = { repo: 'black-forest-labs/FLUX.1-schnell', match: 'ae' };
 const FLUX2_AE = { repo: 'black-forest-labs/FLUX.2-dev', match: 'ae' };
 const FLUX_TEXT_ENCODERS = 'comfyanonymous/flux_text_encoders';
+// Comfy-Org's repackaged Wan assets — the canonical/most-adopted source for
+// the non-diffusion-model components (VAE, text encoder, vision encoder),
+// shared across every Wan variant.
+const WAN_REPACKAGED = 'Comfy-Org/Wan_2.1_ComfyUI_repackaged';
+const WAN_VAE = { repo: WAN_REPACKAGED, path: 'split_files/vae', match: 'wan_2.1_vae' };
+const WAN_T5XXL_SAFETENSORS = { repo: WAN_REPACKAGED, path: 'split_files/text_encoders', match: 'umt5_xxl' };
+const WAN_T5XXL_GGUF = { repo: 'city96/umt5-xxl-encoder-gguf' };
+const WAN_CLIP_VISION = { repo: WAN_REPACKAGED, path: 'split_files/clip_vision', match: 'clip_vision_h' };
 
 export const CATALOG: CatalogModel[] = [
   // ===== Classic full checkpoints (single file, -m) ==========================
@@ -910,6 +920,81 @@ export const CATALOG: CatalogModel[] = [
           gguf: { repo: 'unsloth/Qwen3-4B-Instruct-2507-GGUF' },
           safetensors: { repo: 'Comfy-Org/z_image', path: 'split_files/text_encoders' },
         },
+      },
+    ],
+  },
+
+  // ===== Video (Wan) — T2V/I2V only, see the scope note at the top of this file ==
+  {
+    id: 'wan2.1-t2v-1.3b',
+    name: 'Wan2.1 T2V 1.3B',
+    description:
+      'Wan2.1 text-to-video, 1.3B — the smallest/fastest Wan variant. Diffusion + Wan VAE + UMT5-XXL.',
+    loadMode: 'diffusion-model',
+    mode: 'video',
+    reference: `${DOCS}/wan.md`,
+    defaults: { width: 832, height: 480, cfg_scale: 6, sampler: 'euler', video_frames: 33, flow_shift: 3 },
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'samuelchristlie/Wan2.1-T2V-1.3B-GGUF' },
+          safetensors: { repo: WAN_REPACKAGED, path: 'split_files/diffusion_models', match: 't2v_1.3b' },
+        },
+      },
+      { role: 'vae', bundleType: 'vae', label: 'VAE (Wan 2.1)', required: true, quantizable: false, sources: { safetensors: WAN_VAE } },
+      {
+        role: 't5xxl',
+        bundleType: 'clip',
+        label: 'UMT5-XXL text encoder',
+        required: true,
+        quantizable: true,
+        sources: { gguf: WAN_T5XXL_GGUF, safetensors: WAN_T5XXL_SAFETENSORS },
+      },
+    ],
+  },
+  {
+    id: 'wan2.1-i2v-14b-480p',
+    name: 'Wan2.1 I2V 14B (480P)',
+    description:
+      'Wan2.1 image-to-video, 14B, 480P. Diffusion + Wan VAE + UMT5-XXL + CLIP vision. ' +
+      'Generation request needs an init_image (uploaded via /v1/inputs) as the I2V source frame.',
+    loadMode: 'diffusion-model',
+    mode: 'video',
+    reference: `${DOCS}/wan.md`,
+    defaults: { width: 832, height: 480, cfg_scale: 6, sampler: 'euler', video_frames: 33, flow_shift: 3 },
+    components: [
+      {
+        role: 'checkpoint',
+        bundleType: 'checkpoint',
+        label: 'Diffusion model',
+        required: true,
+        quantizable: true,
+        sources: {
+          gguf: { repo: 'city96/Wan2.1-I2V-14B-480P-gguf' },
+          safetensors: { repo: WAN_REPACKAGED, path: 'split_files/diffusion_models', match: 'i2v_480p_14b' },
+        },
+      },
+      { role: 'vae', bundleType: 'vae', label: 'VAE (Wan 2.1)', required: true, quantizable: false, sources: { safetensors: WAN_VAE } },
+      {
+        role: 't5xxl',
+        bundleType: 'clip',
+        label: 'UMT5-XXL text encoder',
+        required: true,
+        quantizable: true,
+        sources: { gguf: WAN_T5XXL_GGUF, safetensors: WAN_T5XXL_SAFETENSORS },
+      },
+      {
+        role: 'clip_vision',
+        bundleType: 'clip',
+        label: 'CLIP vision encoder',
+        required: true,
+        quantizable: false,
+        sources: { safetensors: WAN_CLIP_VISION },
       },
     ],
   },

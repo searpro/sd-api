@@ -8,22 +8,24 @@ import { safeResolve } from '../util/paths.js';
 import { errors } from '../errors.js';
 import { errorResponseSchema } from '../schemas/generate.js';
 
-// outputsDir holds both generated images (src/sd/wrapper.ts) and, since
-// generated speech is saved there too (src/routes/audio.ts), generated audio.
+// outputsDir holds generated images, generated speech audio
+// (src/routes/audio.ts), and generated video (Wan, mode:"video" bundles —
+// src/sd/wrapper.ts).
 const MIME_BY_EXT: Record<string, string> = {
   '.png': 'image/png',
   '.wav': 'audio/wav',
+  '.webm': 'video/webm',
 };
 
 export async function outputRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  // Phase 6: fetch a generated output (image or audio; binary or base64).
+  // Phase 6: fetch a generated output (image, audio, or video; binary or base64).
   app.get<{ Params: { name: string }; Querystring: { format?: string } }>(
     '/v1/outputs/:name',
     {
       schema: {
         tags: ['outputs'],
-        summary: 'Fetch a generated output (image or audio)',
+        summary: 'Fetch a generated output (image, audio, or video)',
         description: 'Returns the raw bytes, or a base64 JSON payload when ?format=base64.',
         params: z.object({ name: z.string() }),
         querystring: z.object({ format: z.enum(['binary', 'base64']).optional() }),

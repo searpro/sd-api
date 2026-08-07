@@ -16,6 +16,9 @@ export const FLAG_MAP = {
   height: '-H',
   seed: '-s',
   sampler: '--sampling-method',
+  // Video (Wan T2V/I2V) — only emitted when bundle.mode === 'video'.
+  video_frames: '--video-frames',
+  flow_shift: '--flow-shift',
 } as const;
 
 /** sd-cli flag for each resolved weight / text-encoder component. */
@@ -55,6 +58,9 @@ export interface BuildArgsInput {
 export function buildArgs(input: BuildArgsInput): string[] {
   const { params, bundle, outputPath, images } = input;
   const args: string[] = [];
+
+  // Video (Wan T2V/I2V) — switches sd-cli into video-generation mode.
+  if (bundle.mode === 'video') args.push('-M', 'vid_gen');
 
   // Checkpoint: a full model uses -m; a standalone diffusion model uses
   // --diffusion-model and is accompanied by its VAE / text encoders.
@@ -98,6 +104,11 @@ export function buildArgs(input: BuildArgsInput): string[] {
   if (params.height !== undefined) args.push(FLAG_MAP.height, String(params.height));
   if (params.seed !== undefined) args.push(FLAG_MAP.seed, String(params.seed));
   if (params.sampler) args.push(FLAG_MAP.sampler, params.sampler);
+
+  // Video (Wan T2V/I2V) params — I2V's conditioning image reuses -i (images.init)
+  // above, no separate flag needed.
+  if (params.video_frames !== undefined) args.push(FLAG_MAP.video_frames, String(params.video_frames));
+  if (params.flow_shift !== undefined) args.push(FLAG_MAP.flow_shift, String(params.flow_shift));
 
   // Model-specific extra flags from the bundle manifest.
   for (const a of bundle.extraArgs) args.push(a);

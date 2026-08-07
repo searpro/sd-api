@@ -16,9 +16,16 @@ export async function generateRoutes(fastify: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ['generate'],
-        summary: 'Generate an image (synchronous)',
+        summary: 'Generate an image or video (synchronous)',
         description:
-          'Runs stable-diffusion.cpp and waits for the result. For long jobs prefer POST /v1/jobs.',
+          'Runs stable-diffusion.cpp and waits for the result. For long jobs (especially ' +
+          'video) prefer POST /v1/jobs + GET /v1/jobs/:id/stream instead. ' +
+          'Image vs. video is decided entirely by the selected `model` bundle, not a request ' +
+          'field: a bundle whose model.json has `"mode": "video"` (currently Wan T2V/I2V — see ' +
+          'the "wan2.1-t2v-1.3b"/"wan2.1-i2v-14b-480p" catalog entries) generates a WebM video using ' +
+          '`video_frames`/`flow_shift` below and returns `video_path`/`video_url` instead of ' +
+          '`image_path`/`image_url`. For I2V, set `init_image` to the source frame (same field ' +
+          'img2img uses).',
         body: generateSchema,
         response: {
           200: generateResponseSchema,
@@ -39,10 +46,13 @@ export async function generateRoutes(fastify: FastifyInstance): Promise<void> {
         onLog: (line) => req.log.debug({ line }, 'sd'),
       });
 
+      const outputUrl = `/v1/outputs/${result.outputName}`;
       return reply.send({
-        image_path: result.imagePath,
-        image_url: `/v1/outputs/${result.imageName}`,
+        ...(result.kind === 'video'
+          ? { video_path: result.outputPath, video_url: outputUrl }
+          : { image_path: result.outputPath, image_url: outputUrl }),
         metadata: {
+          kind: result.kind,
           prompt: result.params.prompt,
           model: result.params.model,
           seed: result.params.seed,
@@ -51,6 +61,8 @@ export async function generateRoutes(fastify: FastifyInstance): Promise<void> {
           width: result.params.width,
           height: result.params.height,
           sampler: result.params.sampler,
+          video_frames: result.params.video_frames,
+          flow_shift: result.params.flow_shift,
           duration_ms: result.durationMs,
         },
       });

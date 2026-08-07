@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // A stand-in for the stable-diffusion.cpp `sd` binary used in tests.
 // It mimics the CLI contract: parses -o/--steps, prints a progress bar to
-// stderr, then writes a tiny valid PNG to the output path.
+// stderr, then writes a tiny valid PNG to the output path — regardless of
+// what other flags (including -M vid_gen for video/Wan) or extension (.webm)
+// were requested, since sd-api's own success check is just "non-empty file
+// at outputPath", not content validation.
 import { writeFileSync } from 'node:fs';
 
 const argv = process.argv.slice(2);
