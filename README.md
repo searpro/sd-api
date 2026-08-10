@@ -133,7 +133,7 @@ Resolved in order (later wins): `config/default.json` → `config/local.json` �
 | `SD_MODELS_DIR` | `models_dir` | `./data/models` | Root holding per-model bundle directories |
 | `SD_OUTPUTS_DIR` | `outputs_dir` | `./data/outputs` | Generated images, (non-streaming) generated speech audio, and generated video |
 | `SD_HOST` / `SD_PORT` | `host` / `port` | `0.0.0.0` / `3000` | Listen address |
-| `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `2` | Generation queue concurrency |
+| `SD_MAX_CONCURRENT_JOBS` | `max_concurrent_jobs` | `1` | Max stable-diffusion.cpp processes at once, across both `/v1/generate` and `/v1/jobs`. Each holds a full model in RAM — raising this multiplies peak memory |
 | `SD_MAX_CONCURRENT_DOWNLOADS` | `max_concurrent_downloads` | `2` | Download queue concurrency |
 | `SD_JOB_TIMEOUT_MS` | `job_timeout_ms` | `600000` | Per-process hard timeout (image generations) |
 | `SD_VIDEO_JOB_TIMEOUT_MS` | `video_job_timeout_ms` | `3600000` | Per-process hard timeout for `mode:"video"` (Wan) generations — much longer-running than images |
