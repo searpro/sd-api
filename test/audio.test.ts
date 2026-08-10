@@ -142,6 +142,24 @@ describe('Audio proxy — speech', () => {
     expect(body.reference_text).toBe('hello');
   });
 
+  it('forwards instruct/caption for voice-design models (e.g. Qwen3-TTS-VoiceDesign)', async () => {
+    const res = await fetch(`${baseUrl}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'pocket-tts',
+        input: 'hello',
+        response_format: 'json',
+        instruct: 'a warm, low-pitched older man, speaking slowly',
+        caption: 'a warm, low-pitched older man, speaking slowly',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.instruct).toBe('a warm, low-pitched older man, speaking slowly');
+    expect(body.caption).toBe('a warm, low-pitched older man, speaking slowly');
+  });
+
   it('rejects a missing model/input with 400 before touching the upstream', async () => {
     const before = await (await fetch(`${app.audio.baseUrl}/__debug`)).json();
     const res = await fetch(`${baseUrl}/v1/audio/speech`, {
@@ -186,6 +204,34 @@ describe('Audio proxy — transcriptions', () => {
     expect(body.text).toMatch(/received \d+ multipart bytes/);
     const receivedBytes = Number(body.text.match(/received (\d+)/)[1]);
     expect(receivedBytes).toBeGreaterThan(1000);
+  });
+
+  it('transparently routes words_out:true through /v1/tasks/run and returns a words[] array', async () => {
+    // Confirmed against the real binary: audiocpp_server's OpenAI-shape
+    // /v1/audio/transcriptions ignores words_out entirely — only its
+    // generic task-runner path (/v1/tasks/run, task:"asr") honors it.
+    const res = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'pocket-tts', audio: '/data/sample.wav', words_out: true }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.text).toContain('/data/sample.wav');
+    expect(body.words).toEqual([
+      { word: 'fake', start_sample: 0, end_sample: 1600, confidence: 0 },
+      { word: 'transcript', start_sample: 1600, end_sample: 4800, confidence: 0 },
+    ]);
+  });
+
+  it('does not request words_out when the flag is absent (plain /v1/audio/transcriptions, no words[])', async () => {
+    const res = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'pocket-tts', audio: '/data/sample.wav' }),
+    });
+    const body = await res.json();
+    expect(body.words).toBeUndefined();
   });
 });
 

@@ -602,7 +602,7 @@ curl 'localhost:3000/v1/audio/voices?model=pocket-tts'
 | `POST /v1/audio/transcriptions` | JSON (`{"model","audio":"<server path>"}`) or multipart upload (OpenAI Whisper convention) |
 | `GET /v1/audio/voices` | Cached voice ids / configured presets for a TTS model |
 | `GET /v1/audio/models` | OpenAI-shape listing of currently configured models |
-| `POST /v1/audio/tasks/run` | Generic escape hatch for tasks without a dedicated route (voice conversion, music generation, source separation, ...) |
+| `POST /v1/audio/tasks/run` | Generic escape hatch for tasks without a dedicated route (voice conversion, music generation, source separation, word-level timestamps, ...) |
 | `POST /v1/audio-voice-refs` | Upload a reference voice WAV (multipart) — see "Voice cloning" below |
 | `POST /v1/audio-models/:model/voice-presets` | Register an uploaded reference as a named, selectable voice preset |
 
@@ -665,20 +665,83 @@ drives the same flow (upload/pick a WAV, optional transcript, then Generate
 speech registers the preset — once per unique file, cached client-side — and
 calls speech with `voice` set).
 
+#### Voice design from text (e.g. Qwen3-TTS-VoiceDesign, OmniVoice)
+
+Some families synthesize a voice from a **text description** instead of
+cloning one from audio — no upload, no preset registration, just a field on
+the normal `/v1/audio/speech` request. Confirmed via `audiocpp_cli --help`:
+the general field is `instruct` ("Voice-design instruction for models such
+as Qwen3 TTS"); Irodori-TTS's own request-options schema instead names it
+`caption` — send both if unsure, unused ones are ignored. The model's `task`
+must be `"vdes"` (the real `audiocpp_cli`/server task enum — **not** the
+friendlier `"design"` name used in the model's own doc metadata, the same
+gotcha as Chatterbox needing `"clon"` rather than `"clone"`):
+
+```bash
+curl -X POST localhost:3000/v1/audio/speech -o out.wav \
+  -H 'content-type: application/json' \
+  -d '{"model":"qwen3-tts-voicedesign","input":"Hello!","instruct":"a warm, low-pitched older man, speaking slowly"}'
+```
+
+Some families (e.g. Qwen3-TTS-CustomVoice) instead ship **built-in, named
+preset voices** — no reference audio or text description needed. List them
+via `GET /v1/audio/voices?model=<id>` once installed, then select one the
+same way as any registered voice preset (`"voice":"<id>"`).
+
+The web UI's Speak tab has a matching "…or describe the voice in words"
+field in the same expandable section as the audio voice reference.
+
+#### Word-level timestamps (whisperX-like)
+
+Confirmed against the real binary: the timestamp-producing field is
+`words_out: true`, and it **only** works through `audiocpp_server`'s generic
+task-runner path (`/v1/tasks/run`, `task:"asr"`) — its OpenAI-shape
+`/v1/audio/transcriptions` endpoint silently ignores it. `sd-api`'s
+`/v1/audio/transcriptions` proxy hides this: set `words_out:true` on a
+**JSON** request (a server-local `audio` path is required — multipart
+uploads can't use this, since there's no path to hand `/v1/tasks/run`;
+upload first via `POST /v1/audio-voice-refs` to get one) and it transparently
+routes to `/v1/tasks/run` for you, returning the normal `{"text",...}` shape
+plus a `words[]` array (`{word, start_sample, end_sample, confidence}` each
+— no sample rate is included in the response, so converting to seconds
+needs the source audio's own known rate). Only models declaring native
+`word_timestamps` capability produce real timestamps this way — the
+`parakeet-tdt` catalog entry is the best default (no separate aligner
+needed, unlike `qwen3-asr`, which needs a whole extra
+Qwen3-ForcedAligner-0.6B model + session option — not wired up here):
+
+```bash
+curl -X POST localhost:3000/v1/audio-voice-refs -F file=@sample.wav
+# -> {"voiceRefs":[{"path":"/abs/path/<uuid>.wav", ...}]}
+
+curl -X POST localhost:3000/v1/audio/transcriptions \
+  -H 'content-type: application/json' \
+  -d '{"model":"parakeet-tdt","audio":"/abs/path/<uuid>.wav","words_out":true}'
+```
+
+The web UI's Transcribe panel has a "Word-level timestamps" checkbox that
+drives this same upload-then-JSON flow and renders each word as a chip.
+
 ### Model catalog (`/v1/audio-catalog`)
 
 A small curated catalog
 ([`src/audio-catalog/data.ts`](src/audio-catalog/data.ts)), verified against
 audio.cpp's own community GGUF mono-repo
 ([`audio-cpp/audio.cpp-gguf`](https://huggingface.co/audio-cpp/audio.cpp-gguf))
-rather than guessed — spans TTS (PocketTTS, Qwen3-TTS, Chatterbox) and ASR
-(Qwen3-ASR). Each entry carries `family`/`task`, so installing from the
-catalog writes the `model.json` manifest automatically — no hand-authoring
-needed, unlike a manual install. Like the image/LLM catalogs, only repo
-paths are hardcoded; quantizations resolve **live** via the HuggingFace Hub
-API (shared `src/catalog/hf.ts`). audio.cpp covers 40+ model families total;
-this list is deliberately small to start and grows the same way the LLM/
-image catalogs did.
+rather than guessed — spans plain TTS (PocketTTS, Qwen3-TTS), voice cloning
+(Chatterbox, DramaBox), text-driven voice design (Qwen3-TTS-VoiceDesign,
+OmniVoice — `instruct`/`caption`), built-in preset voices
+(Qwen3-TTS-CustomVoice), expressive/nonverbal cues (OmniVoice's inline
+`[laughter]`/`[sigh]`/etc. tags; DramaBox's automatic detection of laughs,
+whispers, and other narrative cues straight from plain text, no tags
+needed), and ASR with native word-level timestamps (Parakeet-TDT) alongside
+plain ASR (Qwen3-ASR). Each entry carries `family`/`task`, so installing
+from the catalog writes the `model.json` manifest automatically — no
+hand-authoring needed, unlike a manual install. Like the image/LLM
+catalogs, only repo paths are hardcoded; quantizations resolve **live** via
+the HuggingFace Hub API (shared `src/catalog/hf.ts`). audio.cpp covers 40+
+model families total; this list grows the same way the LLM/image catalogs
+did — one verified entry at a time.
 
 ```bash
 curl localhost:3000/v1/audio-catalog                        # curated models

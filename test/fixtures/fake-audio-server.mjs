@@ -93,10 +93,13 @@ const server = createServer(async (req, res) => {
         JSON.stringify({
           model: body.model,
           audio_base64: FAKE_WAV.toString('base64'),
-          // Echoed back so tests can prove voice-cloning fields (passthrough
-          // fields not otherwise validated/reshaped) reached the upstream.
+          // Echoed back so tests can prove voice-cloning/voice-design fields
+          // (passthrough fields not otherwise validated/reshaped) reached
+          // the upstream.
           voice_ref: body.voice_ref ?? null,
           reference_text: body.reference_text ?? null,
+          instruct: body.instruct ?? null,
+          caption: body.caption ?? null,
         }),
       );
       return;
@@ -130,6 +133,23 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/v1/tasks/run' && req.method === 'POST') {
     const body = await readBody(req).catch(() => ({}));
+    // Mirrors real audiocpp_server behavior (confirmed against the real
+    // binary): word-level timestamps only come back through this generic
+    // task-runner path (task:"asr", words_out:true), never through the
+    // OpenAI-shape /v1/audio/transcriptions endpoint above.
+    if (body.request?.task === 'asr' && body.request?.words_out) {
+      res.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          text: `fake transcript of ${body.request.audio ?? 'unknown'}`,
+          words: [
+            { word: 'fake', start_sample: 0, end_sample: 1600, confidence: 0 },
+            { word: 'transcript', start_sample: 1600, end_sample: 4800, confidence: 0 },
+          ],
+          timing: { wall_ms: 12.3 },
+        }),
+      );
+      return;
+    }
     res
       .writeHead(200, { 'content-type': 'application/json' })
       .end(JSON.stringify({ model: body.model, result: 'fake-task-result' }));

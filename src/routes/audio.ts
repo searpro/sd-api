@@ -21,9 +21,31 @@ import { uniqueOutputName } from '../util/filename.js';
  * fields like `voice_ref`, `stream_format`, `options`, etc.
  */
 
-const speechSchema = z.object({ model: z.string().min(1), input: z.string().min(1) }).passthrough();
+const speechSchema = z
+  .object({
+    model: z.string().min(1),
+    input: z.string().min(1),
+    // Text-based voice reference for "VoiceDesign"-capable families —
+    // confirmed via `audiocpp_cli --help`: `--instruct <text>` is the
+    // general voice-design instruction field ("for models such as Qwen3
+    // TTS"); `caption` is a *family-specific* alias used by Irodori-TTS's
+    // own request-options schema. Only meaningful against a bundle whose
+    // model.json has task:"vdes" (voice design). We send both from the web
+    // UI's single caption field since which one a given family reads varies.
+    instruct: z.string().optional(),
+    caption: z.string().optional(),
+  })
+  .passthrough();
 const transcriptionJsonSchema = z
-  .object({ model: z.string().min(1), audio: z.string().min(1) })
+  .object({
+    model: z.string().min(1),
+    audio: z.string().min(1),
+    // Word-level timestamps — confirmed against the real binary: this only
+    // works via audiocpp_server's generic /v1/tasks/run task-runner (its
+    // OpenAI-shape /v1/audio/transcriptions ignores the field entirely), so
+    // the route handler below transparently proxies there instead when set.
+    words_out: z.boolean().optional(),
+  })
   .passthrough();
 const tasksRunSchema = z.object({ model: z.string().min(1), request: z.record(z.unknown()) }).passthrough();
 
@@ -234,7 +256,11 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
           'stream_format:"sse"/"audio" for a streaming-capable model. The request body is ' +
           'forwarded to audiocpp_server unmodified. Non-streaming responses are also saved into ' +
           'outputsDir (see GET /v1/outputs/:name) — the saved filename comes back as the ' +
-          '`X-Output-Name` response header.',
+          '`X-Output-Name` response header. Voice-cloning-only models (Chatterbox, DramaBox, ...) ' +
+          'need a reference registered via POST /v1/audio-models/:model/voice-presets, selected ' +
+          'here via `voice`. Voice-*design* models (task:"vdes" — the *-voicedesign catalog ' +
+          'entries, or OmniVoice) instead take a text `instruct` (or, for some families, ' +
+          '`caption`) describing the target voice directly — no reference audio needed.',
         body: speechSchema,
       },
     },
@@ -257,7 +283,15 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
         description:
           'Accepts a JSON body with a server-local audio path ({"model","audio"}), or a ' +
           'multipart/form-data upload (model, language?, file) matching the OpenAI Whisper ' +
-          'convention. Routed by Content-Type; multipart uploads are streamed through unparsed.',
+          'convention. Routed by Content-Type; multipart uploads are streamed through unparsed. ' +
+          'Word-level timestamps (whisperX-like): set `words_out: true` on the JSON-body form to ' +
+          'get a `words[]` array back (`{word, start_sample, end_sample, confidence}` each — e.g. ' +
+          'with the parakeet-tdt catalog entry, which supports this natively). Confirmed against ' +
+          'the real binary that this only works via audiocpp_server\'s generic task-runner path, ' +
+          'not its OpenAI-shape endpoint directly, so this route transparently proxies to ' +
+          '/v1/tasks/run instead when `words_out` is set. **Not available with multipart uploads** ' +
+          '(no server-local path to hand it) — upload first via POST /v1/audio-voice-refs (WAV) to ' +
+          'get a path, then use the JSON form.',
       },
     },
     async (req, reply) => {
@@ -266,6 +300,16 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
         return proxyToAudioRaw(req, reply, '/v1/audio/transcriptions', contentType);
       }
       const body = transcriptionJsonSchema.parse(req.body);
+      if (body.words_out) {
+        // audiocpp_server's OpenAI-shape endpoint silently ignores words_out
+        // (confirmed against the real binary) — only /v1/tasks/run's generic
+        // task-runner path actually returns a words[] array, so route there.
+        const { model, ...request } = body;
+        return proxyToAudio(req, reply, '/v1/tasks/run', 'POST', {
+          model,
+          request: { task: 'asr', ...request },
+        });
+      }
       return proxyToAudio(req, reply, '/v1/audio/transcriptions', 'POST', body);
     },
   );

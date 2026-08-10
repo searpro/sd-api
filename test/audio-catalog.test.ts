@@ -39,6 +39,25 @@ describe('AudioCatalogManager', () => {
     expect(asr!.task).toBe('asr');
   });
 
+  it('has the 5 new voice-design/expressive/timestamp entries with correct family+task', () => {
+    const cat = new AudioCatalogManager(log);
+    const models = cat.list();
+    const byId = Object.fromEntries(models.map((m) => [m.id, m]));
+
+    // task uses the real audiocpp_cli task enum (vdes, not "design" — the
+    // model's own doc metadata uses the friendlier name, but the CLI/server
+    // task field does not, confirmed via `audiocpp_cli --help`).
+    expect(byId['qwen3-tts-voicedesign']).toMatchObject({ family: 'qwen3_tts', task: 'vdes' });
+    expect(byId['qwen3-tts-customvoice']).toMatchObject({ family: 'qwen3_tts', task: 'tts' });
+    expect(byId['omnivoice']).toMatchObject({ family: 'omnivoice', task: 'tts' });
+    expect(byId['dramabox']).toMatchObject({ family: 'dramabox', task: 'tts' });
+    expect(byId['parakeet-tdt']).toMatchObject({ family: 'parakeet_tdt', task: 'asr' });
+
+    for (const id of ['qwen3-tts-voicedesign', 'qwen3-tts-customvoice', 'omnivoice', 'dramabox', 'parakeet-tdt']) {
+      expect(byId[id].components.map((c) => c.role)).toEqual(['weights']);
+    }
+  });
+
   it('resolves quant files via the (stubbed) HF API', async () => {
     stubTree([
       { path: 'PocketTTS-GGUF/english/pocket-tts-english-bf16.gguf', size: 200 },

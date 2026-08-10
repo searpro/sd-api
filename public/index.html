@@ -455,6 +455,14 @@
                   they need a short reference WAV of the target voice (and generate better with a
                   transcript of it). Uploaded once, then reusable across requests.
                 </p>
+                <label for="audioVoiceCaption" style="margin-top:12px;">…or describe the voice in words (VoiceDesign models)</label>
+                <input id="audioVoiceCaption" placeholder="e.g. a warm, low-pitched older man, speaking slowly" />
+                <p style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.5;">
+                  Voice-<em>design</em> models (Qwen3-TTS-VoiceDesign, OmniVoice — catalog entries
+                  ending in "voicedesign", plus OmniVoice) synthesize a voice from a text
+                  description instead of a reference recording. No upload needed — sent directly
+                  per request.
+                </p>
               </div>
             </details>
 
@@ -473,7 +481,12 @@
             <datalist id="audioAsrModelIds"></datalist>
             <label for="audioAsrFile">Audio file</label>
             <input id="audioAsrFile" type="file" accept="audio/*" required />
+            <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;">
+              <input id="audioAsrTimestamps" type="checkbox" style="width:auto;" /> Word-level timestamps
+              (models declaring native support, e.g. parakeet-tdt)
+            </label>
             <button class="primary" id="audioAsrBtn" type="button" style="margin-top:10px;">Transcribe</button>
+            <div id="audioAsrWords" style="margin-top:12px;display:none;line-height:2;"></div>
             <pre class="log" id="audioAsrResult" style="margin-top:12px;min-height:80px;"></pre>
             <p style="color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.5;">
               Uploaded as <code>multipart/form-data</code> — served OpenAI (Whisper)-style at
@@ -2125,12 +2138,18 @@
             }
           }
 
+          // Which field name a voice-design model reads varies (Qwen3-TTS
+          // uses `instruct`, Irodori-TTS uses `caption`) — send both, unused
+          // ones are just ignored.
+          const voiceCaption = $('audioVoiceCaption').value.trim();
+
           const res = await fetch('/v1/audio/speech', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
               model, input,
               ...(voice ? { voice } : {}),
+              ...(voiceCaption ? { instruct: voiceCaption, caption: voiceCaption } : {}),
             }),
           });
           if (!res.ok) {
@@ -2159,15 +2178,57 @@
         const file = $('audioAsrFile').files[0];
         if (!model || !file) { toast('Enter a model and choose a file', true); return; }
         const btn = $('audioAsrBtn');
+        const wantTimestamps = $('audioAsrTimestamps').checked;
         btn.disabled = true; btn.textContent = 'Transcribing…';
         $('audioAsrResult').textContent = '';
+        $('audioAsrWords').style.display = 'none';
+        $('audioAsrWords').innerHTML = '';
         try {
-          const form = new FormData();
-          form.set('model', model);
-          form.set('file', file);
-          const res = await fetch('/v1/audio/transcriptions', { method: 'POST', body: form });
+          let res;
+          if (wantTimestamps) {
+            // words_out only works via a server-local audio path (confirmed
+            // against the real binary — the multipart/OpenAI-shape upload
+            // path silently ignores it), so upload the file first via the
+            // existing WAV-upload endpoint, then use the JSON form.
+            btn.textContent = 'Uploading…';
+            const upForm = new FormData();
+            upForm.set('file', file);
+            const upRes = await fetch('/v1/audio-voice-refs', { method: 'POST', body: upForm });
+            const upBody = await upRes.json().catch(() => ({}));
+            if (!upRes.ok) {
+              throw new Error((upBody?.error?.message || 'Upload failed') + ' — word timestamps currently require a .wav file.');
+            }
+            btn.textContent = 'Transcribing…';
+            res = await fetch('/v1/audio/transcriptions', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ model, audio: upBody.voiceRefs[0].path, words_out: true }),
+            });
+          } else {
+            const form = new FormData();
+            form.set('model', model);
+            form.set('file', file);
+            res = await fetch('/v1/audio/transcriptions', { method: 'POST', body: form });
+          }
           const body = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(body?.error?.message || res.statusText);
+          // Native word-level timestamps (confirmed live against parakeet-tdt):
+          // each entry is {word, start_sample, end_sample, confidence} — the
+          // response carries no sample rate, so render sample indices rather
+          // than falsely converting to seconds. (Some other families may use
+          // different field names; fall back to the word alone if so.)
+          if (Array.isArray(body.words) && body.words.length) {
+            const wordsEl = $('audioAsrWords');
+            wordsEl.style.display = '';
+            wordsEl.innerHTML = body.words.map((w) => {
+              const start = w.start_sample ?? w.start;
+              const end = w.end_sample ?? w.end;
+              const label = start != null && end != null ? `samples ${start}–${end}` : '';
+              const text = w.word ?? w.text ?? '';
+              return '<span class="pill" title="' + label + '" style="margin:0 3px 3px 0;display:inline-block;">' +
+                text + '</span>';
+            }).join('');
+          }
           $('audioAsrResult').textContent = body.text || JSON.stringify(body);
         } catch (e) {
           toast(e.message, true);
