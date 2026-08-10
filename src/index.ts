@@ -61,6 +61,13 @@ async function main(): Promise<void> {
 
   const close = async (signal: string) => {
     app.log.info({ signal }, 'shutting down');
+    // sd-cli runs per-request (not a supervised persistent process), so
+    // unlike llm/audio below it has no start/stop lifecycle of its own —
+    // without this, a generation in flight when the process is signaled
+    // (e.g. tsx watch restarting on a file save) is orphaned: it keeps
+    // running, still holding the model in memory, while the new process
+    // spawns a fresh sd-cli for the next request.
+    app.sd.killAll();
     await app.llm.stop();
     await app.audio.stop();
     await app.close();

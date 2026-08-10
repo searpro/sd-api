@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, stat } from 'node:fs/promises';
@@ -40,11 +40,27 @@ export interface GenerateOptions {
  * black box, driven entirely through argv + parsed stdout/stderr.
  */
 export class SdWrapper extends EventEmitter {
+  // sd-cli is spawned per-request (not a supervised persistent process like
+  // llama-server/audiocpp_server), so nothing else tracks these — without
+  // this, a process killed by a dev-server restart (tsx watch, SIGTERM)
+  // mid-generation is silently orphaned: it keeps running (and holding the
+  // model in memory) while the new server process spawns a fresh one for
+  // the next request. killAll() (called from the shutdown handler) is what
+  // actually terminates them.
+  private readonly activeChildren = new Set<ChildProcess>();
+
   constructor(
     private readonly config: Config,
     private readonly log: FastifyBaseLogger,
   ) {
     super();
+  }
+
+  /** Kill every in-flight sd-cli process. Called on server shutdown. */
+  killAll(): void {
+    for (const child of this.activeChildren) {
+      child.kill('SIGKILL');
+    }
   }
 
   /** True if the configured binary exists and is executable (path or on PATH). */
@@ -205,6 +221,7 @@ export class SdWrapper extends EventEmitter {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: spawnEnv(sdBinaryPath),
       });
+      this.activeChildren.add(child);
 
       let settled = false;
       const stderrTail: string[] = [];
@@ -228,6 +245,7 @@ export class SdWrapper extends EventEmitter {
         settled = true;
         clearTimeout(timer);
         cb.signal?.removeEventListener('abort', onAbort);
+        this.activeChildren.delete(child);
         if (err) reject(err);
         else resolvePromise(result!);
       };

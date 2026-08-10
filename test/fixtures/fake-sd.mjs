@@ -6,6 +6,7 @@
 // were requested, since sd-api's own success check is just "non-empty file
 // at outputPath", not content validation.
 import { writeFileSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const argv = process.argv.slice(2);
 function flag(name) {
@@ -24,6 +25,12 @@ if (process.env.FAKE_SD_FAIL === '1') {
 // Emit progress like the real CLI's sampling bar.
 for (let i = 1; i <= steps; i++) {
   process.stderr.write(`  |====>      | ${i}/${steps} - 0.12s/it\n`);
+}
+
+// So tests can exercise killing/aborting a still-running process (e.g.
+// SdWrapper.killAll() on shutdown) rather than one that's already finished.
+if (process.env.FAKE_SD_SLEEP_MS) {
+  await sleep(Number(process.env.FAKE_SD_SLEEP_MS));
 }
 
 // 1x1 transparent PNG.
