@@ -14,6 +14,7 @@ import { resolveBundle } from '../models/bundle.js';
 import { safeResolve } from '../util/paths.js';
 import { uniqueOutputName } from '../util/filename.js';
 import { spawnEnv } from '../util/spawn-env.js';
+import { Semaphore } from '../util/semaphore.js';
 import { errors, AppError } from '../errors.js';
 
 export interface GenerateResult {
@@ -49,11 +50,32 @@ export class SdWrapper extends EventEmitter {
   // actually terminates them.
   private readonly activeChildren = new Set<ChildProcess>();
 
+  // The hard bound on how many sd-cli processes exist at once.
+  //
+  // It lives here rather than in JobManager because this wrapper is the only
+  // thing that actually spawns them, and there are two ways in: the async
+  // /v1/jobs queue (which has its own admission limit) and the synchronous
+  // POST /v1/generate (which had none). Limiting only the queue left the
+  // synchronous route free to start as many model loads as it received
+  // requests — three concurrent segment images was enough to exhaust memory
+  // and have the OS kill the server mid-run.
+  private readonly slots: Semaphore;
+
   constructor(
     private readonly config: Config,
     private readonly log: FastifyBaseLogger,
   ) {
     super();
+    this.slots = new Semaphore(config.maxConcurrentJobs);
+  }
+
+  /**
+   * How many sd-cli processes are alive right now, and how many callers are
+   * waiting for a slot. This is the memory-critical number — each running
+   * process holds a full model — so it is worth being able to observe.
+   */
+  get stats(): { running: number; queued: number } {
+    return { running: this.activeChildren.size, queued: this.slots.queued };
   }
 
   /** Kill every in-flight sd-cli process. Called on server shutdown. */
@@ -196,11 +218,25 @@ export class SdWrapper extends EventEmitter {
       'resolved model bundle',
     );
     const timeoutMs = bundle.mode === 'video' ? this.config.videoJobTimeoutMs : this.config.jobTimeoutMs;
-    return this.run(args, outputPath, outputName, bundle.mode, effective, timeoutMs, {
-      onProgress,
-      onLog,
+
+    // Everything above is cheap bookkeeping and can happen concurrently. Only
+    // the spawn itself is gated, so callers queue for the expensive resource
+    // and not for path resolution.
+    if (this.slots.inUse >= this.config.maxConcurrentJobs) {
+      this.log.info(
+        { model: bundle.id, inUse: this.slots.inUse, queued: this.slots.queued },
+        'generation slots busy, waiting for a free slot',
+      );
+    }
+    return this.slots.run(
+      () =>
+        this.run(args, outputPath, outputName, bundle.mode, effective, timeoutMs, {
+          onProgress,
+          onLog,
+          signal,
+        }),
       signal,
-    });
+    );
   }
 
   private run(
