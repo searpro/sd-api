@@ -31,11 +31,17 @@ needed. Auto-install stays on for all three binaries (sd-cli, llama-server,
 audiocpp_server), so a worker with an empty Network Volume installs them on
 its first cold start and reuses them afterwards.
 
-> **Known gap**: `searpro/audio.cpp` doesn't currently publish a Linux/CUDA
-> release, so the audiocpp_server auto-install will fail until one exists
-> there. This is non-fatal — sd-api still starts, and image generation / LLM
-> serving work normally; only `/v1/audio/*` stays unavailable until that's
-> resolved.
+`searpro/audio.cpp` now publishes a Linux CUDA build (release tag
+`linux-cuda-test`, resolved automatically as "latest" since it's GitHub's
+most recently published non-draft release) alongside Linux CPU and macOS
+Metal — verified end-to-end in this repo (asset selection, download,
+extraction, and the resulting `audiocpp_server` binary's linked libraries)
+against the real release. It bundles its own CUDA runtime libraries
+(`libcublas`, `libcudart`, `libcufft`, `libcublasLt` — see the archive's
+`BUILD_INFO.txt`), so it needs only an NVIDIA driver on the RunPod host,
+not a CUDA toolkit. The `linux-cuda-test` tag name suggests it may be
+provisional — if it gets renamed/replaced later, `SD_AUDIO_RELEASE_TAG`
+defaulting to "latest" means no config change is needed either way.
 
 ## 2. Create a Network Volume
 
@@ -160,9 +166,15 @@ python3 handler.py --test_input '{"input": {"path": "/health", "method": "GET"}}
 This exercises the real spawn → health-poll → proxy path end to end (see
 `test/fixtures/fake-sd.mjs` and `test/helpers.ts` for how the test suite
 fakes the binaries — the same approach works here for a smoke test without
-real weights or a GPU). `docker build`/`docker run` themselves still need to
-be verified wherever Docker is actually available — no daemon in this
-sandbox.
+real weights or a GPU).
+
+`docker build .` and `docker run` (no `--gpus`, `SD_ACCEL=cpu` etc.) have
+also been verified directly: the image builds, and the container starts
+cleanly — `entrypoint.sh` correctly falls back to local `./data` with no
+Network Volume attached, sd-api boots (binary auto-installs fail only
+because of this test environment's GitHub API rate limit, non-fatally, as
+designed), `/health` responds, and the RunPod SDK initializes. Real GPU
+inference still needs an actual GPU to verify.
 
 ## Out of scope for this setup
 

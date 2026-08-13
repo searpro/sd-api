@@ -17,13 +17,20 @@ RUN npm run build
 # come from the base image (matches how the auto-installer explicitly skips
 # the standalone "cudart-*" redistributable asset — see src/sd/release.ts).
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl ca-certificates python3 python3-pip \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+      ca-certificates python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Node itself comes from the build stage's official image rather than an
+# apt/nodesource install, so there's no extra network dependency (or distro
+# package drift) in this stage. Copied as one directory (not individual
+# files) so the npm/npx/corepack symlinks under bin/ resolve correctly
+# against their targets under lib/node_modules/ — copying them separately
+# breaks that relative resolution.
+COPY --from=build /usr/local /usr/local
 
 WORKDIR /app
 COPY package.json package-lock.json ./
