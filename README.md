@@ -91,6 +91,13 @@ curl -X POST localhost:3000/v1/generate \
 
 Web console: <http://localhost:3000/> · Interactive API docs: <http://localhost:3000/docs>.
 
+## Deployment
+
+A `Dockerfile` + [RunPod](https://runpod.io) Serverless worker packaging
+ships in `runpod/` (generic HTTP-proxy handler, GPU-accelerated image,
+Network Volume-backed model/binary persistence). See **docs/RUNPOD.md** for
+the full build/push/deploy walkthrough.
+
 ## Web UI
 
 A dependency-free, single-file frontend is served at `/` (no build step —
