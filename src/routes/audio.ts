@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { errors } from '../errors.js';
+import { upstreamFetch } from '../util/upstream-fetch.js';
 import { safeResolve } from '../util/paths.js';
 import { uniqueOutputName } from '../util/filename.js';
 
@@ -77,12 +78,16 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
 
     let upstream: Response;
     try {
-      upstream = await fetch(`${app.audio.baseUrl}${upstreamPath}`, {
-        method,
-        headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
+      upstream = await upstreamFetch(
+        `${app.audio.baseUrl}${upstreamPath}`,
+        {
+          method,
+          headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        },
+        app.config.audioRequestTimeoutMs,
+      );
     } catch (err) {
       if (controller.signal.aborted) return; // client already gone
       throw errors.audioServerUnavailable(
@@ -111,13 +116,17 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
 
     let upstream: Response;
     try {
-      upstream = await fetch(`${app.audio.baseUrl}${upstreamPath}`, {
-        method: 'POST',
-        headers: { 'content-type': contentType },
-        body: Readable.toWeb(req.raw) as ReadableStream,
-        duplex: 'half',
-        signal: controller.signal,
-      });
+      upstream = await upstreamFetch(
+        `${app.audio.baseUrl}${upstreamPath}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': contentType },
+          body: Readable.toWeb(req.raw) as ReadableStream,
+          duplex: 'half',
+          signal: controller.signal,
+        },
+        app.config.audioRequestTimeoutMs,
+      );
     } catch (err) {
       if (controller.signal.aborted) return;
       throw errors.audioServerUnavailable(
@@ -150,12 +159,16 @@ export async function audioRoutes(fastify: FastifyInstance): Promise<void> {
 
     let upstream: Response;
     try {
-      upstream = await fetch(`${app.audio.baseUrl}/v1/audio/speech`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+      upstream = await upstreamFetch(
+        `${app.audio.baseUrl}/v1/audio/speech`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        },
+        app.config.audioRequestTimeoutMs,
+      );
     } catch (err) {
       if (controller.signal.aborted) return;
       throw errors.audioServerUnavailable(

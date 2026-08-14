@@ -43,6 +43,7 @@ const configFileSchema = z
     llm_gpu_layers: z.number().int().min(-1),
     llm_jinja: z.boolean(),
     llm_startup_timeout_ms: z.number().int().positive(),
+    llm_request_timeout_ms: z.number().int().min(0),
     audio_binary_path: z.string(),
     audio_auto_install: z.boolean(),
     audio_install_dir: z.string(),
@@ -129,6 +130,8 @@ export interface Config {
   audioStartupTimeoutMs: number;
   /** Generated server config's busy_timeout_ms (0 disables the guard). */
   audioRequestTimeoutMs: number;
+  /** Proxy ceiling for one LLM completion (0 = no limit). */
+  llmRequestTimeoutMs: number;
   /**
    * Root directory for user-uploaded reference voice audio (WAV), used as
    * `voice_ref` for voice-cloning/conversion models like Chatterbox. Mirrors
@@ -196,6 +199,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llm_gpu_layers: num(env.SD_LLM_GPU_LAYERS),
     llm_jinja: bool(env.SD_LLM_JINJA),
     llm_startup_timeout_ms: num(env.SD_LLM_STARTUP_TIMEOUT_MS),
+    llm_request_timeout_ms: num(env.SD_LLM_REQUEST_TIMEOUT_MS),
     audio_binary_path: env.SD_AUDIO_BINARY_PATH,
     audio_auto_install: bool(env.SD_AUDIO_AUTO_INSTALL),
     audio_install_dir: env.SD_AUDIO_INSTALL_DIR,
@@ -242,6 +246,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llmGpuLayers: parsed.llm_gpu_layers,
     llmJinja: parsed.llm_jinja,
     llmStartupTimeoutMs: parsed.llm_startup_timeout_ms,
+    llmRequestTimeoutMs: parsed.llm_request_timeout_ms,
     audioBinaryPath: parsed.audio_binary_path,
     audioAutoInstall: parsed.audio_auto_install,
     audioInstallDir: resolve(process.cwd(), parsed.audio_install_dir),
