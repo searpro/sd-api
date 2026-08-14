@@ -36,5 +36,6 @@
   "audio_port": 8091,
   "audio_startup_timeout_ms": 30000,
   "audio_request_timeout_ms": 300000,
+  "llm_request_timeout_ms": 300000,
   "audio_voice_refs_dir": "./data/audio-voice-refs"
 }

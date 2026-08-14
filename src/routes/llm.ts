@@ -4,6 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { errors } from '../errors.js';
+import { upstreamFetch } from '../util/upstream-fetch.js';
 
 /**
  * OpenAI-compatible reverse proxy to a locally-supervised `llama-server`
@@ -54,12 +55,16 @@ export async function llmRoutes(fastify: FastifyInstance): Promise<void> {
 
     let upstream: Response;
     try {
-      upstream = await fetch(`${app.llm.baseUrl}${upstreamPath}`, {
-        method,
-        headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
+      upstream = await upstreamFetch(
+        `${app.llm.baseUrl}${upstreamPath}`,
+        {
+          method,
+          headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        },
+        app.config.llmRequestTimeoutMs,
+      );
     } catch (err) {
       if (controller.signal.aborted) return; // client already gone
       throw errors.llmServerUnavailable(
