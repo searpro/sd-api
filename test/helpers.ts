@@ -75,6 +75,7 @@ export async function makeTestConfig(overrides: Partial<Config> = {}): Promise<C
     logLevel: 'fatal',
     autoInstall: false,
     installDir: join(root, 'bin'),
+    releasesRepo: 'leejet/stable-diffusion.cpp',
     releaseTag: 'latest',
     accel: 'cpu',
     llmBinaryPath,

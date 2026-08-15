@@ -10,13 +10,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import { selectAsset, type Accel, type ReleaseAsset } from './release.js';
 import { errors } from '../errors.js';
 
-const RELEASES_API = 'https://api.github.com/repos/leejet/stable-diffusion.cpp/releases';
-
 // Candidate names of the CLI executable inside a release archive, in priority order.
 const CLI_NAMES = ['sd-cli', 'sd-cli.exe', 'sd', 'sd.exe'];
 
 export interface InstallerConfig {
   installDir: string;
+  /** "owner/repo" to query for releases. */
+  releasesRepo: string;
   releaseTag: string; // "latest" or a specific tag
   accel: Accel;
 }
@@ -55,10 +55,11 @@ export class SdInstaller {
   }
 
   private async fetchRelease(signal?: AbortSignal): Promise<GithubRelease> {
+    const releasesApi = `https://api.github.com/repos/${this.config.releasesRepo}/releases`;
     const url =
       this.config.releaseTag === 'latest'
-        ? `${RELEASES_API}/latest`
-        : `${RELEASES_API}/tags/${encodeURIComponent(this.config.releaseTag)}`;
+        ? `${releasesApi}/latest`
+        : `${releasesApi}/tags/${encodeURIComponent(this.config.releaseTag)}`;
     const res = await fetch(url, { headers: this.apiHeaders(), signal });
     if (!res.ok) {
       const hint =
@@ -66,7 +67,7 @@ export class SdInstaller {
           ? ' (GitHub API rate limit exceeded — set GITHUB_TOKEN to raise it)'
           : '';
       throw errors.downloadFailed(
-        `Failed to query release "${this.config.releaseTag}": HTTP ${res.status} ${res.statusText}${hint}`,
+        `Failed to query ${this.config.releasesRepo} release "${this.config.releaseTag}": HTTP ${res.status} ${res.statusText}${hint}`,
       );
     }
     return (await res.json()) as GithubRelease;

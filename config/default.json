@@ -13,6 +13,7 @@
   "log_level": "info",
   "auto_install": true,
   "install_dir": "./data/bin",
+  "releases_repo": "leejet/stable-diffusion.cpp",
   "release_tag": "latest",
   "accel": "cpu",
   "llm_binary_path": "llama-server",

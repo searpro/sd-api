@@ -30,6 +30,7 @@ const configFileSchema = z
     log_level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
     auto_install: z.boolean(),
     install_dir: z.string(),
+    releases_repo: z.string(),
     release_tag: z.string(),
     accel: z.enum(['cpu', 'vulkan', 'cuda', 'rocm']),
     llm_binary_path: z.string(),
@@ -76,6 +77,12 @@ export interface Config {
   autoInstall: boolean;
   /** Where auto-installed binaries are unpacked. */
   installDir: string;
+  /**
+   * "owner/repo" to query for stable-diffusion.cpp releases. Defaults to
+   * upstream, which does not publish a Linux CUDA build — override with a
+   * fork/mirror that does (mirrors audioReleasesRepo's rationale).
+   */
+  releasesRepo: string;
   /** Release tag to install ("latest" or e.g. "master-714-b12098f"). */
   releaseTag: string;
   /** Hardware backend to prefer when selecting a release asset. */
@@ -186,6 +193,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     log_level: env.SD_LOG_LEVEL,
     auto_install: bool(env.SD_AUTO_INSTALL),
     install_dir: env.SD_INSTALL_DIR,
+    releases_repo: env.SD_RELEASES_REPO,
     release_tag: env.SD_RELEASE_TAG,
     accel: env.SD_ACCEL,
     llm_binary_path: env.SD_LLM_BINARY_PATH,
@@ -233,6 +241,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: parsed.log_level,
     autoInstall: parsed.auto_install,
     installDir: resolve(process.cwd(), parsed.install_dir),
+    releasesRepo: parsed.releases_repo,
     releaseTag: parsed.release_tag,
     accel: parsed.accel,
     llmBinaryPath: parsed.llm_binary_path,

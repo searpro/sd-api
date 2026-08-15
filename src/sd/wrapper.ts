@@ -134,6 +134,7 @@ export class SdWrapper extends EventEmitter {
     const installer = new SdInstaller(
       {
         installDir: this.config.installDir,
+        releasesRepo: this.config.releasesRepo,
         releaseTag: this.config.releaseTag,
         accel: this.config.accel,
       },
