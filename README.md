@@ -6,6 +6,23 @@ driven via `child_process.spawn` — no native bindings required.
 
 Built with **Fastify**, **zod** (validation + OpenAPI schemas), and **pino** (logging).
 
+![sd-api web console](docs/media/console.png)
+
+## Screenshots
+
+Running locally with three model bundles on disk. No `sd` binary is installed in these shots, so
+nothing is generated — they show the console, the model management and the generated OpenAPI
+surface.
+
+| Installed model bundles | Guided model catalog |
+| --- | --- |
+| ![Models](docs/media/models.png) | ![Catalog](docs/media/catalog.png) |
+
+![OpenAPI docs at /docs](docs/media/api-docs.png)
+
+The docs page is generated from the same zod schemas that validate every request, so the published
+contract cannot drift from what the server actually accepts.
+
 ## Features (by phase)
 
 | Phase | Capability | Endpoints |
